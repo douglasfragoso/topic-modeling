@@ -1,0 +1,203 @@
+# =============================================================================
+# 01-preprocessing — configuracao multi-corpus
+# =============================================================================
+# Cada corpus tem 1+ CSV em `data/raw/<corpus>/`. Todos os 6 corpora ja vivem
+# como CSV nativo (ag_news baixado via HF, reuters via NLTK, tweets sample 200k
+# extraido do ZIP original — ver CLAUDE.md para detalhes de origem).
+#
+# Selecione o corpus de duas formas:
+#   1. Edite `default_corpus` no final deste arquivo
+#   2. Ou edite `CORPUS = "..."` na celula 2 do notebook
+#
+# Chaves consumidas por `notebooks/01_preprocessing.ipynb`:
+#   raw_subdir, output_subdir, text_column, id_column, language,
+#   csv.sep, csv.encoding, rename, drop, add_constants,
+#   min_doc_length, min_words, emoji_handling
+#
+# Os modulos downstream (02-embeddings, 03-sentiment, 04-topic-modeling) tem
+# seu proprio params.yaml.
+# =============================================================================
+
+corpora:
+
+  # ---------------------------------------------------------------------------
+  # social — Instagram Raquel Lyra (PT-BR, 2023-2025)  [piloto da dissertacao]
+  # ---------------------------------------------------------------------------
+  social:
+    raw_subdir: social
+    output_subdir: social
+
+    text_column: message
+    id_column: post_id
+    language: pt
+
+    csv:
+      sep: ";"
+      encoding: utf-8-sig
+
+    rename:
+      Date: data
+      Profile: profile
+      Message: message
+      Post-ID: post_id
+      Number of Likes: likes
+      Number of comments: comments
+      Reactions, Comments & Shares: interactions
+      Post interaction rate: interaction_rate
+
+    drop:
+      - "Reach per post"
+      - "Interactions per impression/view"
+      - "Post comments negative sentiment share"
+      - "Unnamed: 13"
+      - "Profile-ID"
+      - "Link"
+
+    add_constants:
+      platform: instagram
+
+    min_doc_length: 30       # chars minimos
+    min_words: 10            # palavras minimas pos-clean
+    emoji_handling: demojize_pt   # demojize_pt (PT-BR) | demojize_en (EN)
+    # URLs, @mentions, #hashtags sao SEMPRE preservados (sinal informativo)
+
+  # ---------------------------------------------------------------------------
+  # arj — American Railroad Journal (EN, 1870-1880, OCR de docx)
+  # ---------------------------------------------------------------------------
+  arj:
+    raw_subdir: arj
+    output_subdir: arj
+
+    text_column: text_en
+    id_column: doc_id
+    language: en
+
+    csv:
+      sep: ","
+      encoding: utf-8-sig
+
+    rename: {}
+    drop: []
+    add_constants:
+      source: american_railroad_journal
+
+    min_doc_length: 50      # docs historicos sao maiores
+    min_words: 15
+    emoji_handling: demojize_en  # ARJ nao tem emojis
+
+  # ---------------------------------------------------------------------------
+  # folha — Folha de Sao Paulo (PT-BR, 2018-2024, ~165k artigos)
+  # CSV bruto e na verdade TSV (separador \t)
+  # ---------------------------------------------------------------------------
+  folha:
+    raw_subdir: folha
+    output_subdir: folha
+
+    text_column: message
+    id_column: post_id      # gerado (raw nao tem id)
+    language: pt
+
+    csv:
+      sep: "\t"
+      encoding: utf-8
+
+    rename:
+      Title: title
+      Content: message
+      Url: url
+      Published: data
+      categories: category
+
+    drop:
+      - url
+
+    add_constants:
+      platform: folha_uol
+
+    min_doc_length: 100     # artigos jornalisticos longos
+    min_words: 30
+    emoji_handling: demojize_pt  # PT-BR (Folha de Sao Paulo)
+
+  # ---------------------------------------------------------------------------
+  # ag_news — AG News (EN, ~127k news headlines)
+  # CSV gerado por 00_baixar_datasets.ipynb (one-time, baixa via HuggingFace)
+  # ---------------------------------------------------------------------------
+  ag_news:
+    raw_subdir: ag_news
+    output_subdir: ag_news
+
+    text_column: message
+    id_column: post_id
+    language: en
+
+    csv:
+      sep: ","
+      encoding: utf-8
+
+    rename: {}
+    drop: []
+    add_constants:
+      source: ag_news_huggingface
+
+    min_doc_length: 30      # headlines + descricao curtas
+    min_words: 5
+    emoji_handling: demojize_en
+
+  # ---------------------------------------------------------------------------
+  # reuters — Reuters-21578 ModApte (EN, ~7.7k news 1987)
+  # CSV gerado por 00_baixar_datasets.ipynb (one-time, baixa via NLTK)
+  # ---------------------------------------------------------------------------
+  reuters:
+    raw_subdir: reuters
+    output_subdir: reuters
+
+    text_column: message
+    id_column: post_id
+    language: en
+
+    csv:
+      sep: ","
+      encoding: utf-8
+
+    rename: {}
+    drop: []
+    add_constants:
+      source: reuters21578_modapte
+
+    min_doc_length: 50
+    min_words: 15
+    emoji_handling: demojize_en
+
+  # ---------------------------------------------------------------------------
+  # tweets_bre2022 — Tweets eleicoes BR 2022 (PT-BR, sample 200k de Zenodo 14834749)
+  # Subset random uniforme (seed=42) dos ~7M tweets originais; CSV em 163 MB
+  # ---------------------------------------------------------------------------
+  tweets_bre2022:
+    raw_subdir: tweets_bre2022
+    output_subdir: tweets_bre2022
+
+    text_column: message
+    id_column: tweet_id        # ja vem do parquet original
+    language: pt
+
+    csv:
+      sep: ","
+      encoding: utf-8
+
+    rename:
+      tweet_content: message   # schema original do parquet usa tweet_content
+      created_at: data
+    drop: []
+    add_constants:
+      platform: twitter
+      election: br_2022
+
+    min_doc_length: 20      # tweets sao curtos
+    min_words: 3
+    emoji_handling: demojize_pt
+
+# =============================================================================
+# Geral
+# =============================================================================
+default_corpus: arj
+seed: 42

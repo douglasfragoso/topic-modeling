@@ -1,0 +1,35 @@
+# Core
+numpy==1.26.4
+pandas==2.3.3
+pyyaml==6.0.3
+scikit-learn==1.8.0
+
+# NLP / Text
+emoji==2.15.0
+langdetect==1.0.9
+nltk==3.9.1
+spacy==3.8.4
+transformers==5.3.0
+datasets==4.2.0
+torch==2.12.0
+
+# Embeddings
+sentence-transformers==5.3.0
+
+# Topic Modeling
+bertopic==0.16.4
+gensim==4.4.0
+hdbscan==0.8.40
+pyLDAvis==3.4.1
+umap-learn==0.5.7
+
+# Visualization
+matplotlib==3.10.8
+seaborn==0.13.2
+wordcloud==1.9.4
+plotly==6.1.2
+
+# Async / HTTP / Ollama
+httpx==0.28.1
+nest-asyncio==1.6.0
+ollama==0.6.1

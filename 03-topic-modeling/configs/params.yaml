@@ -1,0 +1,248 @@
+# =============================================================================
+# 04-topic-modeling — Multi-corpus configuration
+# =============================================================================
+# Cada entrada em `corpora:` carrega o que varia por corpus (subdir, coluna de
+# texto, lista de stopwords-ruído, fórmula STM, agregação). Os parâmetros dos
+# algoritmos (BERTopic, LDA, NMF, STM) ficam em seções compartilhadas.
+#
+# Selecione o corpus editando `default_corpus` no final deste arquivo ou a célula
+# `CORPUS = "..."` no início de cada notebook em `notebooks/`.
+# =============================================================================
+
+corpora:
+
+  # ---------------------------------------------------------------------------
+  # Corpus social — Instagram Raquel Lyra (PT-BR)
+  # ---------------------------------------------------------------------------
+  social:
+    subdir: social
+    text_column: message
+    date_column: data
+    post_id_column: post_id
+    covariates:
+      - platform
+    # Emojis demojizados PT-BR considerados ruído (genéricos/emocionais que
+    # aparecem em todos os tópicos sem carregar sinal temático).
+    stopwords_emojis:
+      - "coração_roxo"
+      - "coração_vermelho"
+      - "coração_amarelo"
+      - "coração_azul"
+      - "coração_verde"
+      - "coração_laranja"
+      - "coração_preto"
+      - "coração_branco"
+      - "brilhos"
+      - "marca_de_seleção_branca"
+      - "rosto_sorridente_com_olhos_de_coração"
+      - "rosto_sorridente_com_3_corações"
+      - "rosto_sorridente_com_olhos_sorridentes"
+      - "rosto_com_olho_piscando"
+      - "rosto_alegre"
+      - "rosto_apaixonado"
+      - "mãos_aplaudindo"
+      - "mãos_de_coração"
+      - "mãos_em_concha"
+      - "mãos_postas"
+      - "polegar_para_cima"
+      - "fogo"
+      - "fogos_de_artifício"
+      - "festa_de_aniversário"
+      - "estrela_brilhante"
+      - "câmera"
+      - "câmera_com_flash"
+      - "símbolo_de_feminino"
+      - "símbolo_de_masculino"
+      - "pele_clara"
+      - "pele_morena_clara"
+      - "pele_morena"
+      - "pele_morena_escura"
+      - "pele_escura"
+    # Token pattern: aceita acentos PT-BR + underscore (para emojis demojizados)
+    token_pattern: '(?u)\b[a-zA-ZÀ-ÿ_]{2,}\b'
+    bertopic_language: multilingual
+    stm_prevalence_formula: "~ data"          # platform é constante (só instagram)
+    stm_min_tokens_per_doc: 100
+
+  # ---------------------------------------------------------------------------
+  # Corpus ag_news — AG News (EN, validacao canonica BERTopic)
+  # ---------------------------------------------------------------------------
+  ag_news:
+    subdir: ag_news
+    text_column: message
+    date_column: date
+    post_id_column: post_id
+    covariates: []                  # AG News nao tem date granular; sem covariaveis
+    stopwords_emojis: []
+    token_pattern: '(?u)\b[a-zA-Z]{2,}\b'
+    bertopic_language: english
+    stm_prevalence_formula: ""      # nao usado
+    stm_min_tokens_per_doc: 30
+    language: en
+
+  # ---------------------------------------------------------------------------
+  # Corpus reuters — Reuters-21578 (EN, validacao canonica LDA + STM)
+  # ---------------------------------------------------------------------------
+  reuters:
+    subdir: reuters
+    text_column: message
+    date_column: date
+    post_id_column: post_id
+    covariates:
+      - category
+    stopwords_emojis: []
+    token_pattern: '(?u)\b[a-zA-Z]{2,}\b'
+    bertopic_language: english
+    # Reuters via nltk: date hardcoded 1987-01-01 → covariavel s(date) flat;
+    # mantemos somente category como covariavel funcional.
+    stm_prevalence_formula: "~ category"
+    stm_min_tokens_per_doc: 50
+    language: en
+
+  # ---------------------------------------------------------------------------
+  # Corpus folha — Folha de Sao Paulo 2024 (PT-BR, validacao canonica LDA + STM)
+  # ---------------------------------------------------------------------------
+  folha:
+    subdir: folha
+    text_column: message
+    date_column: date
+    post_id_column: post_id
+    covariates:
+      - date
+      - category
+    stopwords_emojis: []
+    token_pattern: '(?u)\b[a-zA-ZÀ-ÿ]{2,}\b'
+    bertopic_language: multilingual
+    stm_prevalence_formula: "~ s(as.numeric(as.Date(date))) + category"
+    stm_min_tokens_per_doc: 200
+    language: pt
+
+  # ---------------------------------------------------------------------------
+  # Corpus tweets_bre2022 — Tweets BR Eleições 2022 (PT-BR, Zenodo 14834749)
+  # ---------------------------------------------------------------------------
+  tweets_bre2022:
+    subdir: tweets_bre2022
+    text_column: message
+    date_column: date
+    post_id_column: post_id
+    covariates:
+      - category             # YYYY-MM (mês) — proxy temporal para análise eleitoral
+    stopwords_emojis:
+      - "coração_roxo"
+      - "coração_vermelho"
+      - "coração_amarelo"
+      - "coração_azul"
+      - "coração_verde"
+      - "coração_laranja"
+      - "coração_preto"
+      - "coração_branco"
+      - "brilhos"
+      - "marca_de_seleção_branca"
+      - "rosto_sorridente_com_olhos_de_coração"
+      - "rosto_sorridente_com_3_corações"
+      - "rosto_sorridente_com_olhos_sorridentes"
+      - "rosto_com_olho_piscando"
+      - "rosto_alegre"
+      - "rosto_apaixonado"
+      - "mãos_aplaudindo"
+      - "polegar_para_cima"
+      - "polegar_para_baixo"
+      - "fogo"
+      - "fogos_de_artifício"
+      - "câmera"
+      - "câmera_com_flash"
+    token_pattern: '(?u)\b[a-zA-ZÀ-ÿ_]{2,}\b'
+    bertopic_language: multilingual
+    stm_prevalence_formula: ""   # tweets: STM não é alvo deste corpus
+    stm_min_tokens_per_doc: 30
+    language: pt
+
+  # ---------------------------------------------------------------------------
+  # Corpus arj — American Railroad Journal (EN, jornal histórico)
+  # ---------------------------------------------------------------------------
+  arj:
+    subdir: arj
+    text_column: text_en
+    date_column: date_iso
+    post_id_column: post_id     # 01-preprocessing renomeia doc_id → post_id
+    covariates:
+      - actor
+      - year
+    stopwords_emojis: []        # ARJ não tem emojis
+    # Token pattern padrão (ASCII): docs históricos em inglês, sem acentos
+    token_pattern: '(?u)\b[a-zA-Z]{2,}\b'
+    bertopic_language: english
+    stm_prevalence_formula: "~ year + actor"
+    stm_min_tokens_per_doc: 200
+
+default_corpus: arj
+seed: 42
+
+# =============================================================================
+# BERTopic (compartilhado — embedder e algoritmo são multilíngues)
+# =============================================================================
+bertopic:
+  embedding_model: "qwen3-embedding:0.6b"
+  embedding_backend: "ollama"          # "ollama" ou "sentence_transformers"
+  embedding_dimension: null            # null = nativo 1024d (mudou de 768d Matryoshka em 2026-05-13)
+  umap:
+    n_components: 5
+    n_neighbors: 15
+    min_dist: 0.0
+    metric: "cosine"
+  hdbscan:
+    min_cluster_size: 15
+    min_samples: 5
+    cluster_selection_method: "leaf"
+  min_topic_size: 25
+  mmr_diversity: 0.2
+  reduce_topics_nr: 30
+  vectorizer:
+    ngram_range: [1, 2]
+    # token_pattern e language vêm do corpus_cfg (variam por idioma)
+  reduce_outliers:
+    enabled: true
+    strategy: "c-tf-idf"
+
+# === LDA ===
+lda:
+  k_range: [5, 30]
+  no_below: 5
+  no_above: 0.5
+
+# === NMF ===
+nmf:
+  k_range: [5, 30]
+  max_features: 5000
+
+# === STM ===
+stm:
+  k_range: [5, 30]
+  # Caminho do Rscript. Por padrão usa o `Rscript` no PATH (funciona em
+  # Linux/Mac e em Windows se R foi instalado com "Add to PATH"). Se precisar
+  # apontar para um binário específico, edite aqui (ex: Windows sem PATH):
+  #   "C:/Program Files/R/R-4.5.3/bin/Rscript.exe"
+  rscript_path: "Rscript"
+  max_covariates: 3
+  # prevalence_formula e min_tokens_per_doc vêm do corpus_cfg
+
+# === Nomeação (LLM, multilíngue) ===
+llm:
+  model: "gemma4:e4b"
+  fallback_model: "qwen3:4b"
+  base_url: "http://localhost:11434"
+  enabled: true
+  timeout_per_topic: 30
+
+# === Avaliação ===
+evaluation:
+  run_stability: true
+  stability_seeds: [42, 123, 456, 789, 1024]
+  kappa_threshold: 0.70
+  top_n_keywords: 10
+  top_n_words_cache: 100
+  top_n_keywords_metrics: 20
+  top_n_keywords_llm: 25
+  top_n_keywords_viz: 30
+  top_n_keywords_npmi: 100
+  robustness_top_n_sweep: [10, 15, 20, 25, 30, 50, 100]

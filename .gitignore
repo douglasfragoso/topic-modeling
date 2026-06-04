@@ -1,0 +1,51 @@
+# Temporarios globais
+*.stackdump
+*.zip
+
+# Superpowers docs (plans + specs em qualquer modulo)
+docs/superpowers/
+**/docs/superpowers/
+
+# Claude Code
+.claude/
+CLAUDE.md
+
+# Documento de referência (binário grande)
+topic_modeling.docx
+
+# Data (todos os modulos)
+**/data/raw/*
+!**/data/raw/.gitkeep
+**/data/input/*
+!**/data/input/.gitkeep
+**/data/output/*
+!**/data/output/.gitkeep
+*.npy
+
+# Models
+*_model/
+
+# RAG caches (04-topic-modeling)
+**/notebooks/rag_*.faiss
+**/notebooks/rag_*.csv
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+*.egg-info/
+venv/
+.venv/
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
