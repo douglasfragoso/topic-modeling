@@ -2,7 +2,7 @@
 
 Framework didático e reproduzível para análise qualitativa de corpus textuais em **português brasileiro e inglês**, construído como artefato da dissertação de mestrado do **PPGEC/UPE**. Combina embeddings semânticos densos, modelagem probabilística clássica e LLMs locais para responder duas perguntas complementares sobre qualquer corpus textual:
 
-- **Sobre o que falam?** → Modelagem de tópicos (BERTopic, LDA, STM)
+- **Sobre o que falam?** → Modelagem de tópicos (BERTopic, LDA)
 - **Com que tom falam?** → Análise de sentimento zero-shot via âncoras universais + LLM-as-Judge
 
 O artefato primário são **notebooks Jupyter didáticos**. O framework é totalmente *corpus-agnostic*: para analisar um novo corpus basta declarar uma entrada em `params.yaml` e fornecer um CSV em `data/raw/` — toda a pipeline downstream funciona sem alterações de código.
@@ -512,10 +512,9 @@ A coluna `post_id` permanece como chave de cruzamento *end-to-end*, útil para j
 ### Dependências
 
 - **Python ≥ 3.10**
-- **R ≥ 4.0** (apenas para STM; opcional se você só roda BERTopic/LDA)
 - **Ollama** rodando localmente em `http://localhost:11434` com os modelos:
   - `qwen3-embedding:0.6b` (embeddings, 1024d nativo)
-  - `gemma4:e4b` (LLM-as-Judge do módulo 03)
+  - `gemma4:e4b` (nomeação de tópicos via LLM)
 
 ### Setup do ambiente
 
@@ -526,7 +525,7 @@ venv\Scripts\activate             # Windows PowerShell
 pip install -r requirements.txt
 ```
 
-`requirements.txt` na raiz cobre todas as dependências Python do pipeline. Para R, instale os pacotes `stm`, `tm`, `quanteda`, `jsonlite` via `install.packages()`.
+`requirements.txt` na raiz cobre todas as dependências Python do pipeline.
 
 ### Setup do Ollama
 
@@ -942,74 +941,72 @@ Blocos por-corpus contêm **apenas metadados de I/O** (`text_column`, `id_column
 
 ### Propósito
 
-Descobrir tópicos latentes em corpus textuais usando três algoritmos complementares — **BERTopic** (denso, baseado em embeddings), **LDA** (probabilístico clássico, BoW), **STM** (probabilístico com covariáveis document-level via R). Avaliar e triangular resultados via múltiplas métricas de coerência e diversidade.
+Descobrir tópicos latentes em corpus textuais usando dois algoritmos complementares — **BERTopic** (denso, baseado em embeddings) e **LDA** (probabilístico clássico, BoW). Avaliar e comparar resultados via múltiplas métricas de coerência e diversidade.
 
-### Fluxograma geral (3 algoritmos em paralelo)
+### Fluxograma geral (2 algoritmos em paralelo)
 
 ```
-                          +----------------------+
-                          | corpus_limpo.csv     |
-                          +----------+-----------+
-                                     |
-                +--------------------+--------------------+
-                |                    |                    |
-                v                    v                    v
-        +---------------+    +---------------+    +---------------+
-        | (A) BERTopic  |    |   (B) LDA     |    |  (C) STM (R)  |
-        +-------+-------+    +-------+-------+    +-------+-------+
-                |                    |                    |
-                v                    v                    v
-    +------------------+   +-----------------+   +--------------------+
-    | embeddings .npy  |   | spaCy lemmatize |   | subprocess Rscript |
-    | (do modulo 02)   |   | (pt_core_news ou|   |   run_stm.R        |
-    +--------+---------+   |  en_core_web)   |   +---------+----------+
-             |             +--------+--------+             |
-             v                      |                      v
-    +------------------+            v             +--------------------+
-    | UMAP -> 5D       |   +-----------------+    | textProcessor R    |
-    | (cosine, n=15)   |   | Dictionary BoW  |    | + prepDocuments    |
-    +--------+---------+   | no_below=5      |    +---------+----------+
-             |             | no_above=0.5    |              |
-             v             +--------+--------+              v
-    +------------------+            |             +--------------------+
-    | HDBSCAN          |            v             | searchK K=[5,30]   |
-    | min_cluster=15   |   +-----------------+    | + semantic coh.    |
-    +--------+---------+   | Grid search K   |    +---------+----------+
-             |             | em [5, 30] via  |              |
-             v             | C_v coherence   |              v
-    +------------------+   +--------+--------+    +--------------------+
-    | c-TF-IDF         |            |             | stm(K*) +          |
-    | + MMR (div=0.2)  |            v             | max.em.its=150     |
-    +--------+---------+   +-----------------+    +---------+----------+
-             |             | LdaMulticore    |              |
-             v             | (K*, 20 passes) |              v
-    +------------------+   +--------+--------+    +--------------------+
-    | reduce outliers  |            |             | labelTopics (FREX) |
-    | (c-tf-idf strat) |            v             | + estimateEffect   |
-    +--------+---------+   +-----------------+    +---------+----------+
-             |             | argmax(theta)   |              |
-             v             | doc -> topic    |              v
-    +------------------+   +--------+--------+    +--------------------+
-    | bertopic_        |            |             | parse JSON output  |
-    | results.csv      |            v             +---------+----------+
-    +--------+---------+   +-----------------+              |
-             |             | lda_results.csv |              v
-             |             +--------+--------+    +--------------------+
-             |                      |             | stm_results.csv    |
-             |                      |             +---------+----------+
-             |                      |                       |
-             +----------------------+-----------------------+
-                                    |
-                                    v
-              +-----------------------------------------+
-              | Comparativo cross-model + triangulacao  |
-              | - C_v coherence                         |
-              | - Semantic Coherence (MiniLM-L6)        |
-              | - Topic Diversity (Dieng)               |
-              | - FREX, Exclusivity c-TF-IDF            |
-              | - NPMI / Jaccard intra-corpus           |
-              | - Stability via 5 seeds                 |
-              +-----------------------------------------+
+                     +----------------------+
+                     | corpus_limpo.csv     |
+                     +----------+-----------+
+                                |
+                   +------------+------------+
+                   |                         |
+                   v                         v
+           +---------------+         +---------------+
+           | (A) BERTopic  |         |   (B) LDA     |
+           +-------+-------+         +-------+-------+
+                   |                         |
+                   v                         v
+       +------------------+      +-----------------+
+       | embeddings .npy  |      | spaCy lemmatize |
+       | (do modulo 02)   |      | (pt_core_news ou|
+       +--------+---------+      |  en_core_web)   |
+                |                +--------+--------+
+                v                         |
+       +------------------+               v
+       | UMAP -> 5D       |      +-----------------+
+       | (cosine, n=15)   |      | Dictionary BoW  |
+       +--------+---------+      | no_below=5      |
+                |                | no_above=0.5    |
+                v                +--------+--------+
+       +------------------+               |
+       | HDBSCAN          |               v
+       | min_cluster=15   |      +-----------------+
+       +--------+---------+      | Grid search K   |
+                |                | em [5, 30] via  |
+                v                | C_v coherence   |
+       +------------------+      +--------+--------+
+       | c-TF-IDF         |               |
+       | + MMR (div=0.2)  |               v
+       +--------+---------+      +-----------------+
+                |                | LdaMulticore    |
+                v                | (K*, 20 passes) |
+       +------------------+      +--------+--------+
+       | reduce outliers  |               |
+       | (c-tf-idf strat) |               v
+       +--------+---------+      +-----------------+
+                |                | argmax(theta)   |
+                v                | doc -> topic    |
+       +------------------+      +--------+--------+
+       | bertopic_        |               |
+       | results.csv      |               v
+       +--------+---------+      +-----------------+
+                |                | lda_results.csv |
+                |                +--------+--------+
+                |                         |
+                +------------+------------+
+                             |
+                             v
+         +-----------------------------------------+
+         | Comparativo cross-model                 |
+         | - C_v coherence                         |
+         | - Semantic Coherence (MiniLM-L6)        |
+         | - Topic Diversity (Dieng)               |
+         | - Exclusivity c-TF-IDF, FREX            |
+         | - NPMI / Jaccard intra-corpus           |
+         | - Stability via 5 seeds                 |
+         +-----------------------------------------+
 ```
 
 ### 7.1 BERTopic
@@ -1059,36 +1056,7 @@ lda:
   no_above: 0.5
 ```
 
-### 7.3 STM (Structural Topic Model, via R)
-
-#### Algoritmo
-
-STM estende LDA permitindo que **covariáveis document-level** influenciem a prevalência dos tópicos (`prevalence formula`). Exemplo: `~ date + platform` modela como tópicos variam por data e plataforma.
-
-Pipeline:
-
-1. **Subprocess Python → R**: chama `Rscript scripts/run_stm.R --input <csv> --prevalence "<formula>" --k_min 5 --k_max 30 --seed 42 --output_json stm_output.json`.
-2. **Em R**: `textProcessor` (stopwords + stemming) → `prepDocuments` (`lower.thresh=5`) → `searchK` (varia K) → seleciona via *semantic coherence* + *held-out likelihood* → ajusta `stm()` com `max.em.its=150`.
-3. **Pós-estimação**: `labelTopics` com keywords FREX (top-10) + `estimateEffect` para coeficientes de cada covariate por tópico.
-4. **Export R → JSON**: keywords, `theta` (n_docs × K), efeitos de covariáveis, metadata.
-5. **De volta a Python**: lê JSON, gera `stm_results.csv` no mesmo schema dos outros modelos.
-
-#### Hiperparâmetros principais
-
-```yaml
-stm:
-  k_range: [5, 30]
-  rscript_path: Rscript
-  max_covariates: 3
-```
-
-Por corpus: `stm_prevalence_formula` e `stm_min_tokens_per_doc`. A fórmula
-varia conforme as covariáveis disponíveis no corpus — declare quais colunas
-do `corpus_limpo.csv` afetam a prevalência dos tópicos (ex.: `~ data`,
-`~ categoria + ator`). Para corpus sem covariáveis, deixe a string vazia ou
-omita o campo, e o STM rodará sem `estimateEffect`.
-
-### 7.4 Métricas de avaliação
+### 7.3 Métricas de avaliação
 
 Todas implementadas em `notebooks/_helpers.py`.
 
@@ -1098,14 +1066,14 @@ Todas implementadas em `notebooks/_helpers.py`.
 | **Semantic Coherence** | Similaridade cosseno média entre embeddings das top keywords de cada tópico (sentence-transformers MiniLM-L6) | [0, 1] | Comparativo cross-model |
 | **Topic Diversity** (Dieng) | % de vocabulário único nos top-10 keywords agregados / (10 · n_tópicos) | [0, 1] | Cross-model |
 | **Exclusivity (c-TF-IDF)** | Concentração da massa c-TF-IDF de cada keyword em um único tópico | [0, 1] | BERTopic |
-| **FREX** (harmonic) | Média harmônica de percentis (frequência × exclusividade), Airoldi 2016 | [0, 1] | STM, comparativo |
-| **NPMI cross-model** | Co-ocorrência normalizada entre keywords de dois modelos no mesmo corpus | [−1, 1] | Triangulação (LDA × STM) |
+| **FREX** (harmonic) | Média harmônica de percentis (frequência × exclusividade), Airoldi 2016 | [0, 1] | LDA, comparativo |
+| **NPMI cross-model** | Co-ocorrência normalizada entre keywords de dois modelos no mesmo corpus | [−1, 1] | Triangulação (BERTopic × LDA) |
 | **Stability (Jaccard)** | Jaccard médio entre tópicos do mesmo modelo em 5 seeds diferentes | [0, 1] | Robustez |
 | **Diversity (entropy)** | Entropia normalizada de `theta` (distribuição tema-documento) | [0, 1] | Cross-model |
 
 ### Triangulação
 
-Para corpora que rodam ≥ 2 modelos, o notebook comparativo (`05_comparativo.ipynb`) calcula NPMI/Jaccard intra-corpus entre os modelos. Concordância alta → temas robustos; baixa → sinaliza temas modelo-específicos que merecem inspeção qualitativa.
+Para cada corpus, rodar os dois modelos (BERTopic + LDA) e calcular NPMI/Jaccard entre os top-keywords de tópicos correspondentes. Concordância alta → temas robustos; baixa → sinaliza temas modelo-específicos que merecem inspeção qualitativa.
 
 ### Inputs / Outputs
 
@@ -1113,9 +1081,9 @@ Para corpora que rodam ≥ 2 modelos, o notebook comparativo (`05_comparativo.ip
 - **Outputs**:
   - `data/output/<corpus>/bertopic_results.csv`
   - `data/output/<corpus>/lda_results.csv`
-  - `data/output/<corpus>/stm_results.csv`
   - `data/output/<corpus>/<model>_topics_for_eval.csv` — `[topic_id, topic_name, keywords]` por modelo
-  - PNGs de diagnóstico (UMAP, searchK, covariate effects)
+  - PNGs diagnósticos: UMAP 2D, curva C_v, wordclouds, heatmap φ, Jaccard stability
+  - HTMLs interativos: pyLDAvis, barchart Plotly, mapa de documentos
 
 Schema padrão dos `*_results.csv`:
 
@@ -1126,7 +1094,7 @@ Schema padrão dos `*_results.csv`:
 | `topic_id` | int | ID do tópico (`-1` = outlier no BERTopic) |
 | `topic_name` | str | Label legível (concatenação das top keywords) |
 | `topic_prob_distribution` | str (JSON) | Distribuição `theta` do doc sobre todos os tópicos |
-| `topic_type` | str | `bertopic` \| `lda` \| `stm` |
+| `topic_type` | str | `bertopic` \| `lda` |
 | `granularity` | str | Sempre `unit` (1 linha por doc) |
 
 ---
@@ -1175,7 +1143,6 @@ Schema padrão dos `*_results.csv`:
 3. **Replique a entrada** em `02-embeddings` e `03-topic-modeling` (apenas os campos relevantes para cada módulo).
 4. **Rode os notebooks** em ordem: `01-preprocessing` → `02-embeddings` → `03-topic-modeling`. Mude apenas a primeira cell de cada notebook (`CORPUS = "novo_corpus"`).
 
-Nenhuma curadoria de âncoras é necessária — `sentiment.anchors` é universal.
 
 ### Adicionar um novo modelo de embedding
 
@@ -1192,7 +1159,7 @@ Nenhuma curadoria de âncoras é necessária — `sentiment.anchors` é universa
 
 ### Adicionar um novo modelo de tópico
 
-Implemente em `notebooks/06_<novo_modelo>.ipynb` seguindo o schema de output (`post_id, topic_id, topic_name, topic_prob_distribution, topic_type, granularity`). Adicione métricas em `_helpers.py` se necessário, e inclua no comparativo (`05_comparativo.ipynb`).
+Copie `03-topic-modeling/notebooks/bertopic/00_template_bertopic.ipynb` ou `lda/00_template_lda.ipynb`, implemente o pipeline e exporte no schema padrão: `post_id, topic_id, topic_name, topic_prob_distribution, topic_type, granularity`. Adicione métricas em `_helpers.py` se necessário.
 
 ---
 
@@ -1236,7 +1203,7 @@ pivot = bert.groupby(["topic_id", "topic_name", "sentiment"]).size().unstack(fil
 print(pivot)
 ```
 
-Outras análises descritivas naturais: agregações por tópico (qual tópico tem mais negatividade?), evolução temporal (se houver coluna de data), análise por covariate (se declarada no `params.yaml`), comparação cross-model (BERTopic vs LDA vs STM no mesmo corpus).
+Outras análises descritivas naturais: agregações por tópico (qual tópico tem mais negatividade?), evolução temporal (se houver coluna de data), análise por covariate (se declarada no `params.yaml`), comparação cross-model (BERTopic vs LDA no mesmo corpus).
 
 ---
 
@@ -1247,7 +1214,7 @@ Outras análises descritivas naturais: agregações por tópico (qual tópico te
 | **Notebooks-puros** | Artefato primário é o `.ipynb`; sem código Python externo (exceto `_helpers.py` em `03-topic-modeling`) |
 | **Corpus-agnostic** | Toda lógica de classificação/modelagem é genérica; configuração por corpus é apenas I/O |
 | **Reuso de cache** | Embeddings em `.npy` evitam recomputação cara em downstream |
-| **Determinismo** | Seed global 42 fixa todos os RNGs (numpy, gensim, UMAP, STM, langdetect) |
+| **Determinismo** | Seed global 42 fixa todos os RNGs (numpy, gensim, UMAP, langdetect) |
 | **Validação independente** | LLM-as-Judge no módulo 03 audita o classificador sem acesso a seus rótulos |
 | **Triangulação no `03-topic-modeling`** | Múltiplos modelos no mesmo corpus + métricas cross-model evitam overfitting metodológico |
 | **Transferência manual entre módulos** | Cópia explícita de `data/output/` → `data/input/` preserva isolamento e cache trivial |
@@ -1256,4 +1223,8 @@ Outras análises descritivas naturais: agregações por tópico (qual tópico te
 
 ## 12. Licença e citação
 
-Framework desenvolvido como artefato da dissertação de mestrado no **PPGEC/UPE** (Programa de Pós-Graduação em Engenharia da Computação, Universidade de Pernambuco). Para uso acadêmico, cite a dissertação correspondente quando disponível.
+Framework desenvolvido como artefato da dissertação de mestrado no **PPGEC/UPE** (Programa de Pós-Graduação em Engenharia da Computação, Universidade de Pernambuco).
+
+Este software está disponível exclusivamente para consulta e revisão acadêmica. Qualquer uso, reprodução ou distribuição não autorizada é proibida — veja o arquivo [`LICENSE`](LICENSE) para os termos completos.
+
+Para uso acadêmico, cite a dissertação correspondente quando disponível.
