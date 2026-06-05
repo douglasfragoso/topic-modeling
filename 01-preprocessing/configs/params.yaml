@@ -21,71 +21,6 @@
 corpora:
 
   # ---------------------------------------------------------------------------
-  # social — Instagram Raquel Lyra (PT-BR, 2023-2025)  [piloto da dissertacao]
-  # ---------------------------------------------------------------------------
-  social:
-    raw_subdir: social
-    output_subdir: social
-
-    text_column: message
-    id_column: post_id
-    language: pt
-
-    csv:
-      sep: ";"
-      encoding: utf-8-sig
-
-    rename:
-      Date: data
-      Profile: profile
-      Message: message
-      Post-ID: post_id
-      Number of Likes: likes
-      Number of comments: comments
-      Reactions, Comments & Shares: interactions
-      Post interaction rate: interaction_rate
-
-    drop:
-      - "Reach per post"
-      - "Interactions per impression/view"
-      - "Post comments negative sentiment share"
-      - "Unnamed: 13"
-      - "Profile-ID"
-      - "Link"
-
-    add_constants:
-      platform: instagram
-
-    min_doc_length: 30       # chars minimos
-    min_words: 10            # palavras minimas pos-clean
-    emoji_handling: demojize_pt   # demojize_pt (PT-BR) | demojize_en (EN)
-    # URLs, @mentions, #hashtags sao SEMPRE preservados (sinal informativo)
-
-  # ---------------------------------------------------------------------------
-  # arj — American Railroad Journal (EN, 1870-1880, OCR de docx)
-  # ---------------------------------------------------------------------------
-  arj:
-    raw_subdir: arj
-    output_subdir: arj
-
-    text_column: text_en
-    id_column: doc_id
-    language: en
-
-    csv:
-      sep: ","
-      encoding: utf-8-sig
-
-    rename: {}
-    drop: []
-    add_constants:
-      source: american_railroad_journal
-
-    min_doc_length: 50      # docs historicos sao maiores
-    min_words: 15
-    emoji_handling: demojize_en  # ARJ nao tem emojis
-
-  # ---------------------------------------------------------------------------
   # folha — Folha de Sao Paulo (PT-BR, 2018-2024, ~165k artigos)
   # CSV bruto e na verdade TSV (separador \t)
   # ---------------------------------------------------------------------------
@@ -199,5 +134,5 @@ corpora:
 # =============================================================================
 # Geral
 # =============================================================================
-default_corpus: arj
+default_corpus: tweets_bre2022
 seed: 42

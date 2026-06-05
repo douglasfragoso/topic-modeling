@@ -12,59 +12,6 @@
 corpora:
 
   # ---------------------------------------------------------------------------
-  # Corpus social — Instagram Raquel Lyra (PT-BR)
-  # ---------------------------------------------------------------------------
-  social:
-    subdir: social
-    text_column: message
-    date_column: data
-    post_id_column: post_id
-    covariates:
-      - platform
-    # Emojis demojizados PT-BR considerados ruído (genéricos/emocionais que
-    # aparecem em todos os tópicos sem carregar sinal temático).
-    stopwords_emojis:
-      - "coração_roxo"
-      - "coração_vermelho"
-      - "coração_amarelo"
-      - "coração_azul"
-      - "coração_verde"
-      - "coração_laranja"
-      - "coração_preto"
-      - "coração_branco"
-      - "brilhos"
-      - "marca_de_seleção_branca"
-      - "rosto_sorridente_com_olhos_de_coração"
-      - "rosto_sorridente_com_3_corações"
-      - "rosto_sorridente_com_olhos_sorridentes"
-      - "rosto_com_olho_piscando"
-      - "rosto_alegre"
-      - "rosto_apaixonado"
-      - "mãos_aplaudindo"
-      - "mãos_de_coração"
-      - "mãos_em_concha"
-      - "mãos_postas"
-      - "polegar_para_cima"
-      - "fogo"
-      - "fogos_de_artifício"
-      - "festa_de_aniversário"
-      - "estrela_brilhante"
-      - "câmera"
-      - "câmera_com_flash"
-      - "símbolo_de_feminino"
-      - "símbolo_de_masculino"
-      - "pele_clara"
-      - "pele_morena_clara"
-      - "pele_morena"
-      - "pele_morena_escura"
-      - "pele_escura"
-    # Token pattern: aceita acentos PT-BR + underscore (para emojis demojizados)
-    token_pattern: '(?u)\b[a-zA-ZÀ-ÿ_]{2,}\b'
-    bertopic_language: multilingual
-    stm_prevalence_formula: "~ data"          # platform é constante (só instagram)
-    stm_min_tokens_per_doc: 100
-
-  # ---------------------------------------------------------------------------
   # Corpus ag_news — AG News (EN, validacao canonica BERTopic)
   # ---------------------------------------------------------------------------
   ag_news:
@@ -157,25 +104,7 @@ corpora:
     stm_min_tokens_per_doc: 30
     language: pt
 
-  # ---------------------------------------------------------------------------
-  # Corpus arj — American Railroad Journal (EN, jornal histórico)
-  # ---------------------------------------------------------------------------
-  arj:
-    subdir: arj
-    text_column: text_en
-    date_column: date_iso
-    post_id_column: post_id     # 01-preprocessing renomeia doc_id → post_id
-    covariates:
-      - actor
-      - year
-    stopwords_emojis: []        # ARJ não tem emojis
-    # Token pattern padrão (ASCII): docs históricos em inglês, sem acentos
-    token_pattern: '(?u)\b[a-zA-Z]{2,}\b'
-    bertopic_language: english
-    stm_prevalence_formula: "~ year + actor"
-    stm_min_tokens_per_doc: 200
-
-default_corpus: arj
+default_corpus: tweets_bre2022
 seed: 42
 
 # =============================================================================

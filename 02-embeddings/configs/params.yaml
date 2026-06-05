@@ -10,10 +10,6 @@
 # =============================================================================
 
 corpora:
-  social:
-    text_column: message     # coluna de texto em data/input/social/corpus_limpo.csv
-    subdir: social           # data/input/social/, data/output/social/
-
   ag_news:
     text_column: message
     subdir: ag_news
@@ -30,11 +26,7 @@ corpora:
     text_column: message
     subdir: tweets_bre2022
 
-  arj:
-    text_column: text_en     # 01-preprocessing preserva o nome original da coluna
-    subdir: arj
-
-default_corpus: arj
+default_corpus: tweets_bre2022
 seed: 42
 
 embeddings:
