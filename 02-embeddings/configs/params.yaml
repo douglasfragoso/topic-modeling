@@ -34,9 +34,9 @@ embeddings:
 
   models:
     # === Modelo ativo (default) ===
-    - name: "qwen3-embedding:0.6b"
+    - name: "qwen3-embedding:8b"
       type: "ollama"
-      max_tokens: 32000
+      max_tokens: 64000
       dimension: null              # null = dimensão nativa 1024d (sem truncação)
-      suffix: "1024d"
-      timeout: 120
+      suffix: "4096d"
+      timeout: 360

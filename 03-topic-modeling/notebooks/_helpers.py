@@ -140,6 +140,93 @@ def get_seed(params: dict) -> int:
     return params.get("seed", 42)
 
 
+def make_run_output_dir(base_dir, corpus_id, *, create: bool = True):
+    """Diretorio de saida por execucao: ``base_dir/<corpus>_<YYYYmmdd_HHMMSS>``.
+
+    Garante que rodar o mesmo notebook varias vezes (ex.: sweeps com configs
+    diferentes, ou re-execucoes) NAO sobrescreva as saidas anteriores — cada
+    run grava num subdiretorio carimbado com nome do dataset + data + hora.
+
+    Parameters
+    ----------
+    base_dir : str | Path
+        Diretorio-base do corpus (ex.: ``../data/output/<corpus>``). Caches que
+        devem persistir entre runs (ex.: ``lda_metrics.csv`` do grid search)
+        continuam vivendo aqui, no PAI do diretorio de run.
+    corpus_id : str
+        Nome do corpus, usado como prefixo legivel do subdiretorio.
+    create : bool
+        Cria o diretorio (``mkdir -p``) quando True (default).
+
+    Returns
+    -------
+    Path
+        ``base_dir/<corpus_id>_<timestamp>``.
+    """
+    from datetime import datetime
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = Path(base_dir) / f"{corpus_id}_{stamp}"
+    if create:
+        run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
+def resolve_latest_dir(base_output_dir, *, contains, fallback_dir=None, verbose: bool = True):
+    """Resolve o diretório com a versão MAIS RECENTE de ``contains`` (latest-wins).
+
+    Implementa o fluxo "input de um módulo = output do anterior, sem cópia": cada
+    módulo grava num subdiretório carimbado ``<nome>_<AAAAMMDD_HHMMSS>`` no seu
+    ``data/output/<corpus>/`` e o downstream lê a versão mais nova direto de lá.
+
+    Ordem de resolução:
+      1. subdiretórios carimbados de ``base_output_dir`` que contenham ``contains``
+         → retorna o de nome (= timestamp) MAIOR;
+      2. layout plano legado (``contains`` direto em ``base_output_dir``);
+      3. ``fallback_dir`` legado (ex.: ``data/input/<corpus>``).
+
+    Parameters
+    ----------
+    base_output_dir : str | Path
+        ``data/output/<corpus>`` do módulo produtor (ex.: ``../../01-preprocessing/data/output/folha``).
+    contains : str
+        Nome do arquivo que identifica uma versão válida (ex.: ``corpus_limpo.csv``).
+    fallback_dir : str | Path | None
+        Diretório legado a usar se nada versionado/plano for encontrado.
+    verbose : bool
+        Imprime a versão resolvida.
+
+    Returns
+    -------
+    Path
+        Diretório que contém ``contains``. Use ``Path.name`` como string de versão
+        para rastreabilidade (provenance) nos metrics.
+    """
+    base = Path(base_output_dir)
+    stamped = (
+        [d for d in base.iterdir() if d.is_dir() and (d / contains).exists()]
+        if base.exists()
+        else []
+    )
+    if stamped:
+        chosen = max(stamped, key=lambda d: d.name)
+        if verbose:
+            print(f"  versão resolvida: {chosen.name}/ (latest)")
+        return chosen
+    if base.exists() and (base / contains).exists():
+        if verbose:
+            print(f"  layout plano legado: {base}")
+        return base
+    if fallback_dir is not None and (Path(fallback_dir) / contains).exists():
+        if verbose:
+            print(f"  fallback legado: {fallback_dir}")
+        return Path(fallback_dir)
+    raise FileNotFoundError(
+        f"'{contains}' não encontrado em {base} (subdirs carimbados ou plano) "
+        f"nem no fallback {fallback_dir}"
+    )
+
+
 def load_corpus(input_dir, encoding: str = "utf-8", verbose: bool = True) -> pd.DataFrame:
     """Carrega o corpus do diretório de input com auto-detecção de sentimento.
 
@@ -483,29 +570,36 @@ def _clean_label(raw: str) -> str:
     for pref in ("Rótulo:", "Rotulo:", "Label:", "Topic:", "Tópico:", "Nome:"):
         if line.lower().startswith(pref.lower()):
             line = line[len(pref):].strip()
-    # Cap at 5 words to honour the prompt contract.
+    # Cap at 7 words — enough for descriptive labels without truncating mid-phrase.
     parts = line.split()
-    if len(parts) > 5:
-        line = " ".join(parts[:5])
+    if len(parts) > 7:
+        line = " ".join(parts[:7])
     return line
 
 
-def build_prompt(
-    keywords: list[str],
-    example_docs: list[str] | None = None,
-    top_n: int = 15,
-    doc_max_chars: int = 200,
-    max_docs: int = 1,
-) -> str:
-    """Build a PT-BR prompt for topic naming.
+_HTML_ENTITY_TOKENS = frozenset({
+    "atilde", "ccedil", "iacute", "eacute", "aacute", "otilde", "uacute",
+    "ocirc", "acirc", "ecirc", "iuml", "agrave", "egrave", "ograve",
+    "amp", "nbsp", "quot", "apos", "lt", "gt",
+    "ccedil atilde", "novamente representando",
+})
 
-    F2 — calibração para Qwen3:4b em CPU:
-    - top_n=15 (vs 25 anterior) — reduz ruído da cauda longa
-    - doc_max_chars=200 (vs 400) — encurta prompt
-    - max_docs=1 (vs 2-3) — apenas o doc mais representativo
-    - sufixo /no_think — instrui Qwen3 a desabilitar thinking mode
-    """
-    keywords_str = ", ".join(keywords[:top_n])
+
+def _filter_keywords(keywords: list[str]) -> list[str]:
+    """Remove HTML entity tokens and other known-spurious terms from keyword list."""
+    return [k for k in keywords if k.lower() not in _HTML_ENTITY_TOKENS]
+
+
+def _build_prompt_pt(
+    keywords: list[str],
+    example_docs: list[str] | None,
+    top_n: int,
+    doc_max_chars: int,
+    max_docs: int,
+) -> str:
+    """PT-BR prompt body (rótulos de tópico, jornalístico/notícias)."""
+    clean_kws = _filter_keywords(keywords)
+    keywords_str = ", ".join(clean_kws[:top_n])
     docs_block = ""
     if example_docs:
         snippets = []
@@ -516,10 +610,11 @@ def build_prompt(
             docs_block = "\n\n" + "\n\n".join(snippets)
 
     return (
-        "Voce e um especialista em analise de topicos de redes sociais brasileiras.\n\n"
+        "Voce e um especialista em analise de topicos de noticias jornalisticas brasileiras.\n\n"
         f"Palavras-chave: {keywords_str}"
         f"{docs_block}\n\n"
-        "Tarefa: criar um rotulo curto em portugues brasileiro (3-5 palavras).\n"
+        "Tarefa: criar um rotulo descritivo em portugues brasileiro (4-7 palavras).\n"
+        "O rotulo deve nomear o TEMA central, nao descrever uma acao.\n"
         "Responda APENAS com o rotulo, sem explicacoes, sem aspas, sem prefixos.\n"
         "Use substantivos concretos. Capitalize apenas a primeira palavra.\n\n"
         "/no_think\n\n"
@@ -527,9 +622,77 @@ def build_prompt(
     )
 
 
+def _build_prompt_en(
+    keywords: list[str],
+    example_docs: list[str] | None,
+    top_n: int,
+    doc_max_chars: int,
+    max_docs: int,
+) -> str:
+    """English prompt body (topic labels, generic news/benchmark domain)."""
+    keywords_str = ", ".join(keywords[:top_n])
+    docs_block = ""
+    if example_docs:
+        snippets = []
+        for i, d in enumerate(example_docs[:max_docs]):
+            text = d if isinstance(d, str) else str(d)
+            snippets.append(f"Document {i + 1}: {text[:doc_max_chars].strip()}...")
+        if snippets:
+            docs_block = "\n\n" + "\n\n".join(snippets)
+
+    return (
+        "You are an expert in topic analysis for English-language news corpora.\n\n"
+        f"Keywords: {keywords_str}"
+        f"{docs_block}\n\n"
+        "Task: create a short label in English (3-5 words).\n"
+        "Respond ONLY with the label, no explanations, no quotes, no prefixes.\n"
+        "Use concrete nouns. Capitalize only the first word.\n\n"
+        "/no_think\n\n"
+        "Label:"
+    )
+
+
+def build_prompt(
+    keywords: list[str],
+    example_docs: list[str] | None = None,
+    top_n: int = 15,
+    doc_max_chars: int = 200,
+    max_docs: int = 1,
+    lang: str = "pt",
+) -> str:
+    """Build a topic-naming prompt, language-aware via ``lang``.
+
+    F2 — calibração para Qwen3:4b em CPU:
+    - top_n=15 (vs 25 anterior) — reduz ruído da cauda longa
+    - doc_max_chars=200 (vs 400) — encurta prompt
+    - max_docs=1 (vs 2-3) — apenas o doc mais representativo
+    - sufixo /no_think — instrui Qwen3 a desabilitar thinking mode
+
+    Parameters
+    ----------
+    lang : str
+        ``"pt"`` (default, preserva comportamento histórico — rotulos em
+        portugues brasileiro) ou ``"en"`` (rotulos em ingles, para corpora
+        EN como ag_news/reuters). Qualquer outro valor cai em ``"pt"``.
+    """
+    builder = _build_prompt_en if lang == "en" else _build_prompt_pt
+    return builder(keywords, example_docs, top_n, doc_max_chars, max_docs)
+
+
 # ---------------------------------------------------------------------------
 # Backend call (single attempt + retry wrapper)
 # ---------------------------------------------------------------------------
+
+
+_DEFAULT_SYSTEM_PROMPT_PT = (
+    "Voce e um especialista em topicos. Responda APENAS com "
+    "um rotulo curto (3-5 palavras), sem explicacoes."
+)
+
+_DEFAULT_SYSTEM_PROMPT_EN = (
+    "You are a topic-labeling expert. Respond ONLY with "
+    "a short label (3-5 words), no explanations."
+)
 
 
 def _call_ollama_once(
@@ -540,6 +703,7 @@ def _call_ollama_once(
     temperature: float,
     prompt_builder=None,
     system_prompt: str | None = None,
+    lang: str = "pt",
 ) -> str:
     """One Ollama call. Raises on transport/HTTP error.
 
@@ -547,17 +711,22 @@ def _call_ollama_once(
     ----------
     prompt_builder : callable, optional
         Funcao customizada `(keywords, example_docs) -> str` para gerar o user
-        prompt. Quando None, usa ``build_prompt`` padrao. Permite que o
-        notebook edite o prompt direto na cell sem mexer no naming.py.
+        prompt. Quando None, usa ``build_prompt`` padrao (language-aware via
+        ``lang``). Permite que o notebook edite o prompt direto na cell sem
+        mexer no naming.py.
     system_prompt : str, optional
-        System prompt customizado. Default: enxuto otimizado para topic naming.
+        System prompt customizado. Default: enxuto otimizado para topic
+        naming, selecionado por ``lang`` ("pt" ou "en").
+    lang : str
+        Idioma do rotulo quando ``prompt_builder``/``system_prompt`` nao sao
+        passados explicitamente. Default ``"pt"`` preserva comportamento
+        historico.
     """
     if prompt_builder is None:
-        prompt_builder = build_prompt
+        prompt_builder = lambda kws, docs: build_prompt(kws, docs, lang=lang)  # noqa: E731
     if system_prompt is None:
         system_prompt = (
-            "Voce e um especialista em topicos. Responda APENAS com "
-            "um rotulo curto (3-5 palavras), sem explicacoes."
+            _DEFAULT_SYSTEM_PROMPT_EN if lang == "en" else _DEFAULT_SYSTEM_PROMPT_PT
         )
 
     client = ollama.Client(host=base_url)
@@ -578,29 +747,39 @@ def _call_ollama_once(
     return _clean_label(response["message"]["content"])
 
 
-def _fallback_label(keywords: list[str], n: int = 3) -> str:
-    """Emergency label: top-N keywords joined."""
+def _fallback_label(keywords: list[str], n: int = 3, lang: str = "pt") -> str:
+    """Emergency label: top-N keywords joined.
+
+    ``lang`` apenas afeta a mensagem usada quando ``keywords`` esta vazio
+    (default ``"pt"`` preserva comportamento historico).
+    """
     kws = [k for k in keywords[:n] if k]
     if not kws:
-        return "Tópico sem rótulo"
+        return "Topic without label" if lang == "en" else "Tópico sem rótulo"
     label = ", ".join(kws)
     return label[0].upper() + label[1:]
 
 
-def _smart_fallback(keywords: list[str]) -> str:
+def _smart_fallback(keywords: list[str], lang: str = "pt") -> str:
     """Fallback inteligente: gera frase nominal em vez de lista de keywords.
 
     Em vez de "saude, hospital, leitos" (lista, parece MMR keywords), gera
     "Saude, hospital e leitos" — pelo menos é uma frase nominal natural.
+
+    ``lang="en"`` gera o conector em ingles ("and") em vez de "e", para
+    corpora EN (ag_news, reuters). Default ``"pt"`` preserva comportamento
+    historico.
     """
     kws = [k for k in keywords[:3] if k and len(k) >= 2]
+    no_label_msg = "Topic without label" if lang == "en" else "Topico sem rotulo"
+    connector = "and" if lang == "en" else "e"
     if not kws:
-        return "Topico sem rotulo"
+        return no_label_msg
     if len(kws) == 1:
         return kws[0].capitalize()
     if len(kws) == 2:
-        return f"{kws[0].capitalize()} e {kws[1]}"
-    return f"{kws[0].capitalize()}, {kws[1]} e {kws[2]}"
+        return f"{kws[0].capitalize()} {connector} {kws[1]}"
+    return f"{kws[0].capitalize()}, {kws[1]} {connector} {kws[2]}"
 
 
 def _looks_like_keyword_list(label: str, keywords: list[str], threshold: float = 0.5) -> bool:
@@ -619,6 +798,92 @@ def _looks_like_keyword_list(label: str, keywords: list[str], threshold: float =
     return matches / len(parts) > threshold
 
 
+# ---------------------------------------------------------------------------
+# English few-shot prompt (news / financial-news domain — ag_news, reuters)
+# ---------------------------------------------------------------------------
+#
+# Mirrors the PT-BR `prompt_builder_custom` + `FEW_SHOT_EXAMPLES` pattern used
+# in the folha/reuters notebooks (governance/PE domain), but with English
+# few-shot examples relevant to general news / financial-news benchmarks
+# instead of Brazilian regional politics. Exported so EN-language notebooks
+# (01_bertopic_ag_news, 01_bertopic_reuters, 02_lda_ag_news, 02_lda_reuters)
+# can import directly instead of duplicating the prompt in-notebook.
+
+FEW_SHOT_EXAMPLES_EN = """\
+Examples of a good label (coherent noun phrase):
+
+  Keywords: stocks, shares, market, nasdaq, dow, trading
+  Label: Stock market trading
+
+  Keywords: earnings, profit, revenue, quarter, forecast, shares
+  Label: Quarterly earnings results
+
+  Keywords: election, vote, president, campaign, poll, candidate
+  Label: Presidential election campaign
+
+  Keywords: oil, crude, barrel, opec, prices, supply
+  Label: Crude oil prices
+
+  Keywords: championship, team, league, coach, season, game
+  Label: Sports league championship
+
+Examples of a BAD label (do NOT do this):
+  - "stocks, shares, market" (this is a LIST of keywords, not a label)
+  - "Topic about finance" (too generic, no information)
+  - "Stocks" (too short, lacks context)
+  - "The ongoing developments in the global financial markets this quarter" (too long)
+"""
+
+
+def prompt_builder_en_news(keywords: list[str], example_docs: list[str] | None = None) -> str:
+    """English few-shot prompt builder for news/financial-news corpora.
+
+    Use as ``prompt_builder=prompt_builder_en_news`` in ``name_topic`` /
+    ``name_all_topics`` for EN corpora (ag_news, reuters) — analogous to the
+    PT-BR ``prompt_builder_custom`` defined inline in the folha/reuters
+    notebooks, but with news-domain English few-shot examples instead of
+    Brazilian regional-politics examples.
+    """
+    top_n_keywords = 15
+    max_docs = 1
+    doc_max_chars = 200
+
+    keywords_str = ", ".join(keywords[:top_n_keywords])
+
+    docs_block = ""
+    if example_docs:
+        snippets = []
+        for d in example_docs[:max_docs]:
+            text = d if isinstance(d, str) else str(d)
+            snippets.append(f"Example document: {text[:doc_max_chars].strip()}...")
+        if snippets:
+            docs_block = "\n\n" + "\n\n".join(snippets)
+
+    return (
+        "You are an expert in labeling topics discovered by NLP models. "
+        "Your task is to convert keywords into a HUMAN-READABLE LABEL "
+        "(a coherent noun phrase in English, 3-5 words).\n\n"
+        + FEW_SHOT_EXAMPLES_EN + "\n"
+        "Now analyze this topic:\n\n"
+        f"Keywords: {keywords_str}"
+        f"{docs_block}\n\n"
+        "Strict rules:\n"
+        "- Respond with A SINGLE coherent noun phrase.\n"
+        "- Do NOT repeat the comma-separated keywords (that is a list, not a label).\n"
+        "- 3 to 5 words. No quotes, no prefixes like \"Label:\".\n"
+        "- Use concrete nouns. Capitalize only the first word.\n\n"
+        "/no_think\n\n"
+        "Label:"
+    )
+
+
+system_prompt_en_news = (
+    "You generate human-readable labels for topics. "
+    "Your answer is ALWAYS a coherent noun phrase (3-5 words), "
+    "NEVER a list of keywords."
+)
+
+
 def name_topic(
     keywords: list[str],
     model: str = "qwen3:4b",
@@ -627,6 +892,7 @@ def name_topic(
     max_attempts: int = 3,
     prompt_builder=None,
     system_prompt: str | None = None,
+    lang: str = "pt",
 ) -> str:
     """Name a single topic with retry + temperature escalation.
 
@@ -649,8 +915,18 @@ def name_topic(
         Optional representative documents to ground the prompt.
     max_attempts : int
         Max LLM calls before falling back.
+    prompt_builder : callable, optional
+        Override do prompt builder. Quando None, usa ``build_prompt`` com
+        ``lang`` aplicado.
+    system_prompt : str, optional
+        Override do system prompt. Quando None, usa o default de ``lang``.
+    lang : str
+        Idioma do rotulo ("pt" ou "en") quando ``prompt_builder`` /
+        ``system_prompt`` nao sao passados explicitamente. Tambem usado para
+        selecionar o idioma do fallback (``_smart_fallback``). Default
+        ``"pt"`` preserva comportamento historico.
     """
-    fallback = _smart_fallback(keywords)
+    fallback = _smart_fallback(keywords, lang=lang)
     temperatures = [0.2, 0.5, 0.8]
     last_error: str | None = None
 
@@ -660,6 +936,7 @@ def name_topic(
             label = _call_ollama_once(
                 keywords, example_docs, model, base_url, temp,
                 prompt_builder=prompt_builder, system_prompt=system_prompt,
+                lang=lang,
             )
             if not label or len(label) < 3:
                 last_error = (
@@ -695,11 +972,22 @@ def name_all_topics(
     max_attempts: int = 3,
     prompt_builder=None,
     system_prompt: str | None = None,
+    lang: str = "pt",
 ) -> dict[int, str]:
     """Name every topic. ``example_docs_map`` is optional per-topic context.
 
     Pass ``prompt_builder`` and/or ``system_prompt`` to override the defaults
     direto do notebook (sem editar src/naming.py).
+
+    Parameters
+    ----------
+    lang : str
+        Idioma do rotulo ("pt" ou "en"), usado para selecionar o prompt
+        builder/system prompt/fallback padrao quando ``prompt_builder`` /
+        ``system_prompt`` nao sao passados. Tipicamente vem de
+        ``corpus_cfg["language"]`` (ver ``params.yaml``). Default ``"pt"``
+        preserva comportamento historico para notebooks que nao passam este
+        argumento.
     """
     return {
         tid: name_topic(
@@ -710,6 +998,7 @@ def name_all_topics(
             max_attempts=max_attempts,
             prompt_builder=prompt_builder,
             system_prompt=system_prompt,
+            lang=lang,
         )
         for tid, kws in topics_keywords.items()
     }
@@ -755,7 +1044,7 @@ def compute_stability(
     """Compute topic stability across seeds via greedy Jaccard matching."""
     seeds = list(results_per_seed.keys())
     if len(seeds) < 2:
-        return 0.0, 0.0
+        return float("nan"), float("nan")
 
     pair_scores = []
     for seed_a, seed_b in combinations(seeds, 2):
@@ -1204,6 +1493,387 @@ def compute_diversity(topic_distributions: list[list[float]]) -> float:
 
 
 # ===========================================================================
+# bertopic_sweep.py
+# ===========================================================================
+"""BERTopic outlier-strategy/threshold sweep — multi-seed scoring of
+reduce_outliers variants via coherence, diversity, exclusivity, FREX and
+Jaccard stability.
+
+Corpus-agnostic, same calling convention as ``grid_search_k`` below: pure
+functions, no hardcoded corpus/paths/seeds, no file I/O — the notebook
+supplies ``build_model`` + the corpus's docs/embeddings/tokenized/dictionary
+and owns any caching of the returned DataFrames. Fills the gap the BERTopic
+docs leave open: there's no built-in way to compare
+off/c-tf-idf/embeddings/probabilities/distributions (or a threshold sweep
+within one strategy) empirically across seeds.
+"""
+
+
+def _bertopic_postprocess(
+    model,
+    docs: list[str],
+    embeddings: np.ndarray,
+    strategy: str,
+    threshold: float = 0.0,
+    reduce_nr: int | None = None,
+) -> tuple[float, float, int]:
+    """Apply reduce_outliers(strategy, threshold) + conditional reduce_topics,
+    in the canonical B18 order (reduce_outliers -> update_topics ->
+    reduce_topics -> update_topics). ``strategy="off"`` skips step 1 entirely.
+
+    Returns (outlier_pre, outlier_post, n_raw_topics).
+    """
+    topics0 = model.topics_
+    outlier_pre = sum(1 for t in topics0 if t == -1) / len(topics0)
+    n_raw = len([t for t in set(topics0) if t != -1])
+
+    if strategy != "off":
+        kw = dict(documents=docs, topics=topics0, strategy=strategy, threshold=threshold)
+        if strategy == "embeddings":
+            kw["embeddings"] = embeddings
+        elif strategy == "probabilities":
+            kw["probabilities"] = model.probabilities_
+        new_topics = model.reduce_outliers(**kw)
+        model.update_topics(
+            docs, topics=new_topics, vectorizer_model=model.vectorizer_model,
+            ctfidf_model=model.ctfidf_model, representation_model=model.representation_model,
+        )
+
+    n_now = len([t for t in model.get_topic_info()["Topic"] if t != -1])
+    if reduce_nr and n_now > reduce_nr:
+        model.reduce_topics(docs, nr_topics=reduce_nr)
+        model.update_topics(
+            docs, topics=model.topics_, vectorizer_model=model.vectorizer_model,
+            ctfidf_model=model.ctfidf_model, representation_model=model.representation_model,
+        )
+
+    outlier_post = sum(1 for t in model.topics_ if t == -1) / len(model.topics_)
+    return outlier_pre, outlier_post, n_raw
+
+
+def _bertopic_sweep_metrics(
+    model,
+    tokenized: list[list[str]],
+    dictionary,
+    top_n_metrics: int = 20,
+) -> tuple[dict, dict[int, list[str]]]:
+    """Score a post-processed BERTopic model: K, c_v, diversity, exclusivity, FREX.
+
+    Returns (metrics_dict, {topic_id: keywords}); the keyword map is what
+    callers accumulate across seeds to feed ``compute_stability``.
+    """
+    topics = model.topics_
+    valid_ids = sorted(t for t in set(topics) if t != -1)
+    topics_keywords = {tid: [w for w, _ in model.get_topic(tid)] for tid in valid_ids}
+    topic_index = {tid: i for i, tid in enumerate(sorted(model.get_topics().keys()))}
+    ctfidf_matrix = model.c_tf_idf_.toarray() if model.c_tf_idf_ is not None else np.zeros((1, 1))
+    vocab = model.vectorizer_model.get_feature_names_out()
+    vocab_index = {w: i for i, w in enumerate(vocab)}
+
+    # Exclusividade (F1): topic_word_scores DEVE vir da MATRIZ COMPLETA c-TF-IDF,
+    # nao do top-N de model.get_topic() (cache). Se usar so o cache, o denominador
+    # da exclusividade ignora o peso real de uma palavra nos OUTROS topicos (tratado
+    # como 0 quando ela nao esta no top-N deles), inflando a exclusividade. Espelha
+    # o fix F1 ja presente nos notebooks folha/reuters — mantem a coluna Exclus do
+    # sweep comparavel com a metrica do pipeline principal.
+    topic_word_scores: dict[int, dict[str, float]] = {}
+    if model.c_tf_idf_ is not None:
+        for tid in valid_ids:
+            if tid in topic_index:
+                row = ctfidf_matrix[topic_index[tid]]
+                topic_word_scores[tid] = {
+                    vocab[j]: float(row[j]) for j in range(len(vocab)) if row[j] > 0
+                }
+            else:
+                topic_word_scores[tid] = {}
+    else:
+        topic_word_scores = {tid: {w: float(s) for w, s in model.get_topic(tid)} for tid in valid_ids}
+
+    tk_metrics = {tid: kws[:top_n_metrics] for tid, kws in topics_keywords.items()}
+    cv = compute_coherence_cv(tk_metrics, tokenized, dictionary)
+    div = compute_topic_diversity(topics_keywords, top_k=top_n_metrics)
+    excl, _ = compute_exclusivity_ctfidf(topics_keywords, topic_word_scores, top_n=top_n_metrics)
+    frex, _ = compute_frex_score(
+        topics_keywords, topic_word_matrix=ctfidf_matrix,
+        vocab_index=vocab_index, topic_index=topic_index, top_n=top_n_metrics, w_freq=0.5,
+    )
+    seed_kws = {tid: [w for w in kws if w] for tid, kws in topics_keywords.items()}
+    seed_kws = {tid: kws for tid, kws in seed_kws.items() if len(kws) >= 2}
+    return dict(K=len(valid_ids), cv=cv, div=div, excl=excl, frex=frex), seed_kws
+
+
+def sweep_outlier_strategies(
+    build_model,
+    docs: list[str],
+    embeddings: np.ndarray,
+    tokenized: list[list[str]],
+    dictionary,
+    seeds: Iterable[int],
+    strategies: Iterable[str] = ("off", "c-tf-idf", "embeddings", "probabilities", "distributions"),
+    reduce_nr: int | None = None,
+    top_n_metrics: int = 20,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Multi-seed sweep over ``reduce_outliers`` strategies.
+
+    For each seed, fits ONE base model via ``build_model(seed)`` then
+    deep-copies it once per strategy so every variant starts from the same
+    fit — only post-processing differs. Scores each variant with
+    c_v/diversity/exclusivity/FREX plus, per strategy, multi-seed Jaccard
+    stability (``compute_stability``).
+
+    Parameters
+    ----------
+    build_model : Callable[[int], BERTopic]
+        Factory returning a fresh, *unfit* BERTopic instance configured for
+        the given seed (UMAP/HDBSCAN ``random_state``). The caller owns the
+        embedding model, vectorizer, ctfidf and representation model choices
+        — this function only fits/copies/post-processes/scores.
+    docs, embeddings : corpus texts and pre-computed embeddings (aligned).
+    tokenized, dictionary : gensim inputs for c_v coherence.
+    seeds : seeds to fit the base model with (stability needs >= 2).
+    strategies : reduce_outliers strategies to compare; ``"off"`` skips
+        reduce_outliers entirely (B18 minus step 1).
+    reduce_nr : if set and the post-RO topic count exceeds it, applies
+        ``reduce_topics(nr_topics=reduce_nr)`` — B18 step 3.
+    top_n_metrics : keywords per topic fed to the metric functions.
+
+    Returns
+    -------
+    (raw, agg) : ``raw`` has one row per (seed, strategy); ``agg`` has one
+        row per strategy with means + Jaccard stability across seeds.
+    """
+    import copy
+
+    rows = []
+    kws_by_strategy: dict[str, dict[int, dict[int, list[str]]]] = {s: {} for s in strategies}
+
+    for seed in seeds:
+        base = build_model(seed)
+        base.fit_transform(docs, embeddings=embeddings)
+        for strat in strategies:
+            m = copy.deepcopy(base)
+            o_pre, o_post, n_raw = _bertopic_postprocess(
+                m, docs, embeddings, strat, reduce_nr=reduce_nr,
+            )
+            met, seed_kws = _bertopic_sweep_metrics(m, tokenized, dictionary, top_n_metrics)
+            kws_by_strategy[strat][seed] = seed_kws
+            rows.append(dict(strategy=strat, seed=seed, n_raw=n_raw,
+                              outlier_pre=o_pre, outlier_post=o_post, **met))
+
+    raw = pd.DataFrame(rows)
+
+    agg_rows = []
+    for strat in strategies:
+        sub = raw[raw.strategy == strat]
+        if sub.empty:
+            continue
+        stab_m, stab_s = (
+            compute_stability(kws_by_strategy[strat])
+            if len(kws_by_strategy[strat]) >= 2 else (float("nan"), float("nan"))
+        )
+        agg_rows.append(dict(
+            strategy=strat, n_seeds=len(sub),
+            K=round(sub["K"].mean(), 1),
+            outlier_pre=round(sub["outlier_pre"].mean(), 4),
+            outlier_post=round(sub["outlier_post"].mean(), 4),
+            C_v=round(sub["cv"].mean(), 4), Diversity=round(sub["div"].mean(), 4),
+            Exclus=round(sub["excl"].mean(), 4), FREX=round(sub["frex"].mean(), 4),
+            Stability=round(stab_m, 4), Stab_std=round(stab_s, 4),
+        ))
+
+    agg = pd.DataFrame(agg_rows)
+    return raw, agg
+
+
+def sweep_outlier_threshold(
+    build_model,
+    docs: list[str],
+    embeddings: np.ndarray,
+    tokenized: list[list[str]],
+    dictionary,
+    seeds: Iterable[int],
+    grids: dict[str, list[float]],
+    reduce_nr: int | None = None,
+    top_n_metrics: int = 20,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Multi-seed sweep over per-strategy ``reduce_outliers`` thresholds.
+
+    Same fit-once-per-seed/copy-per-variant structure as
+    ``sweep_outlier_strategies``, but holds the strategy fixed per grid entry
+    and varies ``threshold`` instead — answers "does partial reallocation
+    beat threshold=0 (reallocate everything) or strategy='off' (reallocate
+    nothing)?". ``grids`` maps strategy -> list of thresholds to try, e.g.
+    ``{"c-tf-idf": [0.08, 0.12, 0.15]}`` (calibrate per strategy: c-tf-idf and
+    probabilities scores live in [0, 1]; embeddings cosine similarity is
+    typically high — calibrate against a seed=42 probe first).
+    """
+    import copy
+
+    rows = []
+    kws_by: dict[tuple[str, float], dict[int, dict[int, list[str]]]] = {}
+
+    for seed in seeds:
+        base = build_model(seed)
+        base.fit_transform(docs, embeddings=embeddings)
+        for strat, grid in grids.items():
+            for thr in grid:
+                m = copy.deepcopy(base)
+                o_pre, o_post, n_raw = _bertopic_postprocess(
+                    m, docs, embeddings, strat, threshold=thr, reduce_nr=reduce_nr,
+                )
+                met, seed_kws = _bertopic_sweep_metrics(m, tokenized, dictionary, top_n_metrics)
+                kws_by.setdefault((strat, thr), {})[seed] = seed_kws
+                rows.append(dict(strategy=strat, threshold=thr, seed=seed, n_raw=n_raw,
+                                  outlier_pre=o_pre, outlier_post=o_post, **met))
+
+    raw = pd.DataFrame(rows)
+
+    agg_rows = []
+    for (strat, thr), kmap in kws_by.items():
+        sub = raw[(raw.strategy == strat) & (raw.threshold == thr)]
+        stab_m, stab_s = compute_stability(kmap) if len(kmap) >= 2 else (float("nan"), float("nan"))
+        agg_rows.append(dict(
+            strategy=strat, threshold=thr, n_seeds=len(sub),
+            K=round(sub["K"].mean(), 1),
+            outlier_post=round(sub["outlier_post"].mean(), 4),
+            C_v=round(sub["cv"].mean(), 4), Diversity=round(sub["div"].mean(), 4),
+            Exclus=round(sub["excl"].mean(), 4), FREX=round(sub["frex"].mean(), 4),
+            Stability=round(stab_m, 4), Stab_std=round(stab_s, 4),
+        ))
+
+    agg = (
+        pd.DataFrame(agg_rows).sort_values(["strategy", "threshold"]).reset_index(drop=True)
+        if agg_rows else pd.DataFrame(agg_rows)
+    )
+    return raw, agg
+
+
+def sweep_bertopic_grid(
+    build_model,
+    docs: list[str],
+    embeddings: np.ndarray,
+    tokenized: list[list[str]],
+    dictionary,
+    seeds: Iterable[int],
+    n_neighbors_grid: Iterable[int],
+    min_cluster_size_grid: Iterable[int],
+    min_samples_grid: Iterable[int | None] = (None,),
+    reduce_nr_grid: Iterable[int | None] = (None,),
+    cluster_selection_methods_grid: Iterable[str] = ("leaf",),
+    outlier_strategy: str = "off",
+    outlier_threshold: float = 0.0,
+    top_n_metrics: int = 20,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Multi-seed grid search over UMAP ``n_neighbors`` x HDBSCAN
+    ``min_cluster_size`` x HDBSCAN ``min_samples`` x ``reduce_topics(nr_topics)``
+    target — the structural-hyperparameter analogue of ``grid_search_k`` for LDA.
+
+    UMAP ``n_neighbors`` and the two HDBSCAN knobs (``min_cluster_size`` +
+    ``min_samples``) each force a fresh UMAP+HDBSCAN fit, so this refits once
+    per ``(seed, n_neighbors, min_cluster_size, min_samples)`` and reuses that
+    fit across ``reduce_nr_grid`` (post-processing only, same fit-once/copy-many
+    pattern as the other sweeps here). ``min_samples`` controls how conservative
+    HDBSCAN is (higher -> more points pushed to -1/outlier): the knob that most
+    affects outlier rate on short/noisy text (e.g. tweets), which is exactly why
+    it belongs in the grid alongside ``min_cluster_size``.
+
+    A single-seed version of this grid search is cheap but unreliable: ARJ's
+    own validation (see ``relatorio_arj.md`` sec 7.1) found a single-seed
+    n_neighbors/min_cluster_size grid picked the wrong n_neighbors, only
+    caught by multi-seed stability scoring. Always pass >= 2 seeds and trust
+    ``Stability``/``Stab_std`` over a single run's coherence number.
+
+    Parameters
+    ----------
+    build_model : Callable[[int, int, int, int | None, str], BERTopic]
+        Factory ``(seed, n_neighbors, min_cluster_size, min_samples,
+        cluster_selection_method) -> unfit BERTopic``. The caller owns
+        embedding/vectorizer/ctfidf/representation choices.
+    min_samples_grid : Iterable[int | None]
+        HDBSCAN ``min_samples`` values to try. Default ``(None,)`` runs a single
+        point using the factory's own default.
+    cluster_selection_methods_grid : Iterable[str]
+        HDBSCAN ``cluster_selection_method`` values to try. Default ``("leaf",)``.
+        Pass ``("leaf", "eom")`` to compare both methods. ``"eom"`` (Excess of
+        Mass) tends to produce fewer, larger clusters; ``"leaf"`` tends to produce
+        more, smaller clusters.
+    outlier_strategy, outlier_threshold : applied identically to every grid
+        point via ``_bertopic_postprocess`` (B18 order). Should always be
+        ``"off"`` here to isolate the structural-hyperparameter effect — compare
+        outlier strategies separately with ``sweep_outlier_strategies``.
+
+    Returns
+    -------
+    (raw, agg) : ``raw`` has one row per (seed, n_neighbors, min_cluster_size,
+        min_samples, cluster_selection_method, reduce_nr); ``agg`` has one row
+        per grid point with means + Jaccard stability across seeds.
+    """
+    import copy
+
+    rows = []
+    kws_by_combo: dict[tuple, dict[int, dict[int, list[str]]]] = {}
+
+    for seed in seeds:
+        for nn in n_neighbors_grid:
+            for mcs in min_cluster_size_grid:
+                for ms in min_samples_grid:
+                    for csm in cluster_selection_methods_grid:
+                        base = build_model(seed, nn, mcs, ms, csm)
+                        base.fit_transform(docs, embeddings=embeddings)
+                        for nr in reduce_nr_grid:
+                            m = copy.deepcopy(base)
+                            o_pre, o_post, n_raw = _bertopic_postprocess(
+                                m, docs, embeddings, outlier_strategy,
+                                threshold=outlier_threshold, reduce_nr=nr,
+                            )
+                            met, seed_kws = _bertopic_sweep_metrics(m, tokenized, dictionary, top_n_metrics)
+                            key = (nn, mcs, ms, csm, nr)
+                            kws_by_combo.setdefault(key, {})[seed] = seed_kws
+                            rows.append(dict(
+                                n_neighbors=nn, min_cluster_size=mcs, min_samples=ms,
+                                cluster_selection_method=csm, reduce_nr=nr, seed=seed,
+                                n_raw=n_raw, outlier_pre=o_pre, outlier_post=o_post, **met,
+                            ))
+
+    raw = pd.DataFrame(rows)
+
+    def _nan_safe_mask(col: pd.Series, value) -> pd.Series:
+        # A None grid value (min_samples=None / reduce_nr=None) becomes NaN once
+        # mixed with ints in the DataFrame; `col == None` is always False (not
+        # NaN-aware), so it must be special-cased rather than compared directly.
+        return col.isna() if value is None else col == value
+
+    agg_rows = []
+    for (nn, mcs, ms, csm, nr), kmap in kws_by_combo.items():
+        sub = raw[
+            (raw.n_neighbors == nn) & (raw.min_cluster_size == mcs)
+            & _nan_safe_mask(raw.min_samples, ms)
+            & (raw.cluster_selection_method == csm)
+            & _nan_safe_mask(raw.reduce_nr, nr)
+        ]
+        stab_m, stab_s = compute_stability(kmap) if len(kmap) >= 2 else (float("nan"), float("nan"))
+        agg_rows.append(dict(
+            n_neighbors=nn, min_cluster_size=mcs, min_samples=ms,
+            cluster_selection_method=csm, reduce_nr=nr,
+            n_seeds=len(sub),
+            K=round(sub["K"].mean(), 1),
+            outlier_pre=round(sub["outlier_pre"].mean(), 4),
+            outlier_post=round(sub["outlier_post"].mean(), 4),
+            C_v=round(sub["cv"].mean(), 4), Diversity=round(sub["div"].mean(), 4),
+            Exclus=round(sub["excl"].mean(), 4), FREX=round(sub["frex"].mean(), 4),
+            Stability=round(stab_m, 4), Stab_std=round(stab_s, 4),
+        ))
+
+    agg = (
+        pd.DataFrame(agg_rows)
+        .sort_values(["n_neighbors", "min_cluster_size", "min_samples", "cluster_selection_method", "reduce_nr"])
+        .reset_index(drop=True)
+        if agg_rows else pd.DataFrame(agg_rows)
+    )
+    return raw, agg
+
+
+# ===========================================================================
 # lda_pipeline.py
 # ===========================================================================
 """LDA pipeline: grid search K, train, extract topics, qualitative report.
@@ -1220,9 +1890,14 @@ def grid_search_k(
     seed: int = 42,
     passes: int = 10,
     workers: int | None = None,
-) -> dict[int, float]:
-    """Train LDA for each K in `k_range` and return c_v coherence per K."""
-    scores: dict[int, float] = {}
+) -> tuple[dict[int, float], dict[int, float]]:
+    """Train LDA for each K and return (cv_scores, perplexity_scores).
+
+    Fits each model once and computes both C_v coherence and perplexity
+    (exp(-log_perplexity_per_word)) to avoid refitting.
+    """
+    cv_scores: dict[int, float] = {}
+    perplexity_scores: dict[int, float] = {}
     for k in k_range:
         model = LdaMulticore(
             corpus=corpus_bow,
@@ -1238,8 +1913,66 @@ def grid_search_k(
             dictionary=dictionary,
             coherence="c_v",
         )
-        scores[k] = float(cm.get_coherence())
-    return scores
+        cv_scores[k] = float(cm.get_coherence())
+        perplexity_scores[k] = float(np.exp(-model.log_perplexity(corpus_bow)))
+    return cv_scores, perplexity_scores
+
+
+def grid_search_alpha_eta(
+    corpus_bow: list[list[tuple[int, int]]],
+    dictionary: Dictionary,
+    tokenized: list[list[str]],
+    k: int,
+    alpha_grid: list | None = None,
+    eta_grid: list | None = None,
+    seed: int = 42,
+    passes: int = 10,
+    workers: int | None = None,
+) -> tuple[pd.DataFrame, object, object]:
+    """Varre combinações alpha × eta com K fixo. Retorna (df_results, best_alpha, best_eta).
+
+    alpha — prior Dirichlet doc→tópico:
+      'symmetric': uniforme (default gensim); 'asymmetric': 1/k (favorece temas dominantes);
+      float baixo (0.01): docs concentrados em poucos tópicos; alto (0.5): difusos.
+
+    eta — prior Dirichlet tópico→palavra:
+      None: gensim default (1/K); float baixo (0.01): tópicos com vocab concentrado
+      (mais distintos); alto (0.1+): maior sobreposição de vocabulário entre tópicos.
+
+    df_results ordenado por cv decrescente — primeira linha é o vencedor.
+    """
+    if alpha_grid is None:
+        alpha_grid = ["symmetric", "asymmetric", 0.1, 0.5]
+    if eta_grid is None:
+        eta_grid = [None, 0.01, 0.1]
+    rows: list[dict] = []
+    for alpha in alpha_grid:
+        for eta in eta_grid:
+            model = LdaMulticore(
+                corpus=corpus_bow,
+                id2word=dictionary,
+                num_topics=k,
+                random_state=seed,
+                passes=passes,
+                workers=workers,
+                alpha=alpha,
+                eta=eta,
+            )
+            cm = CoherenceModel(
+                model=model, texts=tokenized, dictionary=dictionary, coherence="c_v"
+            )
+            rows.append({
+                "alpha": alpha,
+                "eta": eta,
+                "cv": float(cm.get_coherence()),
+                "perplexity": float(np.exp(-model.log_perplexity(corpus_bow))),
+            })
+    df = (
+        pd.DataFrame(rows)
+        .sort_values("cv", ascending=False)
+        .reset_index(drop=True)
+    )
+    return df, df.iloc[0]["alpha"], df.iloc[0]["eta"]
 
 
 def train_lda(
@@ -1249,8 +1982,10 @@ def train_lda(
     seed: int = 42,
     passes: int = 20,
     workers: int | None = None,
+    alpha: str | float | list = "symmetric",
+    eta: str | float | list | None = None,
 ) -> LdaMulticore:
-    """Train final LDA model with chosen K."""
+    """Train final LDA model with chosen K, alpha and eta."""
     return LdaMulticore(
         corpus=corpus_bow,
         id2word=dictionary,
@@ -1258,6 +1993,8 @@ def train_lda(
         random_state=seed,
         passes=passes,
         workers=workers,
+        alpha=alpha,
+        eta=eta,
     )
 
 

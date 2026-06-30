@@ -24,10 +24,12 @@ python -m spacy download en_core_web_sm    # EN
 ### 2. Ollama (embeddings + nomeação de tópicos)
 
 ```powershell
-ollama pull qwen3-embedding:0.6b   # vetorização de documentos
-ollama pull gemma4:e4b             # nomeação de tópicos via LLM
-ollama serve                       # deixar em background
+ollama pull qwen3-embedding:0.6b        # vetorização de documentos (1024d nativo)
+ollama pull gemma2:2b-instruct-q4_K_M   # nomeação de tópicos via LLM (modelo em params.yaml > llm.model)
+ollama serve                            # deixar em background
 ```
+
+> O modelo de nomeação vem de `03-topic-modeling/configs/params.yaml > llm.model`. Se trocar de modelo, baixe-o no Ollama (`ollama pull <modelo>`) e ajuste o `params.yaml` — os notebooks leem dali, não há nome de modelo hardcoded.
 
 ### 3. Executar o pipeline completo
 
@@ -1036,6 +1038,44 @@ bertopic:
   reduce_outliers: {enabled: true, strategy: c-tf-idf}
 ```
 
+> **Nota — `min_df` por corpus:** o `min_df` (frequência documental mínima para um termo entrar no vocabulário) é definido **no notebook**, não no `params.yaml`. AG News usa `min_df=5`; `folha` e `tweets_bre2022` usam o default (`min_df=1`, sem filtro), porque em texto curto (tweets) ou já limpo (folha) um corte alto varre vocabulário demais.
+
+#### Glossário dos hiperparâmetros estruturais
+
+| Param | Componente | O que faz | Efeito de subir o valor |
+|---|---|---|---|
+| `n_neighbors` | UMAP | tamanho da vizinhança considerada na projeção | mais **estrutura global** (clusters maiores, menos fragmentação); abaixar = mais estrutura local |
+| `min_dist` | UMAP | distância mínima entre pontos no espaço reduzido | pontos mais espalhados; `0.0` = clusters bem compactos |
+| `min_cluster_size` (mcs) | HDBSCAN | nº **mínimo de documentos** para um grupo ser considerado tópico | menos tópicos, maiores e mais robustos |
+| `min_samples` | HDBSCAN | quão **conservador** é o clustering (densidade exigida p/ um ponto ser "núcleo") | **mais outliers (`-1`)**, clusters mais densos/robustos; abaixar = menos outliers, mas clusters mais ruidosos |
+| `reduce_topics_nr` (nr) | pós-proc. | nº-alvo de tópicos após fundir os menores | força granularidade interpretável |
+
+**`min_samples` em detalhe** (a pergunta mais comum): é o parâmetro do HDBSCAN que regula o quão "exigente" o algoritmo é para considerar uma região densa o suficiente. Tecnicamente é o `k` usado no cálculo da *core distance* (densidade via k-vizinhos). **Quanto maior, mais documentos viram outlier (`-1`)** e mais conservadora fica a clusterização; quanto menor, mais documentos são absorvidos em clusters (menos outliers, porém tópicos mais ruidosos). É distinto do `min_cluster_size` (que define o *tamanho* mínimo de um cluster). Em **texto curto e ruidoso (tweets)** é o knob que mais afeta a taxa de outliers — por isso entra no grid search.
+
+#### Grid search e sweeps de robustez (`_helpers.py`)
+
+Análogo ao `grid_search_k` do LDA, o BERTopic tem três varreduras multi-seed (todas pontuam por C_v, Topic Diversity, Exclusividade c-TF-IDF, FREX e **estabilidade Jaccard entre seeds**). Ficam **desligadas por padrão** (custo de refit completo por combinação × seed) e são habilitadas em `configs/params.yaml > evaluation`:
+
+| Função | Varre | Flag em `params.yaml` |
+|---|---|---|
+| `sweep_bertopic_grid` | `n_neighbors` × `min_cluster_size` × `min_samples` × `reduce_topics_nr` | `run_param_sweep` |
+| `sweep_outlier_strategies` | as 5 estratégias de `reduce_outliers` (`off`, `c-tf-idf`, `embeddings`, `probabilities`, `distributions`) | `run_outlier_sweep` |
+| `sweep_outlier_threshold` | grade de `threshold` por estratégia de `reduce_outliers` | (chamado manualmente) |
+
+```yaml
+evaluation:
+  run_param_sweep: false
+  param_sweep_seeds: [42, 123, 456]
+  param_sweep_n_neighbors: [10, 15, 20]
+  param_sweep_min_cluster_size: [8, 10, 15]
+  param_sweep_min_samples: [null]        # [null] = usa o default do corpus; ex. [3, 5, 10] para varrer
+  run_outlier_sweep: false
+  outlier_sweep_seeds: [42, 123, 456, 789, 1024]
+  outlier_sweep_strategies: ["off", "c-tf-idf", "embeddings", "probabilities", "distributions"]
+```
+
+Cada sweep grava dois CSVs no diretório de saída da execução: `sweep_*_raw.csv` (uma linha por seed × combinação) e `sweep_*.csv` (agregado por combinação, com média das métricas + estabilidade). **Confie na coluna `Stability`/`Stab_std` mais do que num único C_v** — um grid de seed única pode escolher a combinação errada (lição do corpus ARJ: `n_neighbors` ótimo só apareceu na validação multi-seed).
+
 ### 7.2 LDA (Latent Dirichlet Allocation)
 
 #### Algoritmo
@@ -1078,12 +1118,15 @@ Para cada corpus, rodar os dois modelos (BERTopic + LDA) e calcular NPMI/Jaccard
 ### Inputs / Outputs
 
 - **Inputs**: `data/input/<corpus>/corpus_limpo.csv` (+ embeddings `.npy` para BERTopic, opcional)
-- **Outputs**:
-  - `data/output/<corpus>/bertopic_results.csv`
-  - `data/output/<corpus>/lda_results.csv`
-  - `data/output/<corpus>/<model>_topics_for_eval.csv` — `[topic_id, topic_name, keywords]` por modelo
+- **Outputs** — gravados num **subdiretório por execução** carimbado com dataset + data + hora: `data/output/<corpus>/<corpus>_<AAAAMMDD>_<HHMMSS>/`. Rodar o mesmo notebook várias vezes (ex.: sweeps com configs diferentes) **não sobrescreve** runs anteriores. O carimbo é gerado por `_helpers.make_run_output_dir(base_dir, corpus_id)`.
+  - `<run_dir>/bertopic_results.csv`
+  - `<run_dir>/lda_results.csv`
+  - `<run_dir>/<model>_topics_for_eval.csv` — `[topic_id, topic_name, keywords]` por modelo
+  - `<run_dir>/sweep_*.csv` — agregados/raw dos grid searches (quando habilitados)
   - PNGs diagnósticos: UMAP 2D, curva C_v, wordclouds, heatmap φ, Jaccard stability
   - HTMLs interativos: pyLDAvis, barchart Plotly, mapa de documentos
+
+> **Exceção (cache do LDA):** o `lda_metrics.csv` do grid search de K é lido/persistido no **diretório-base** (`data/output/<corpus>/`, pai do run dir), para reutilizar o grid entre execuções e não recomputar (~13 min). Apenas os artefatos por-run vão para a pasta carimbada.
 
 Schema padrão dos `*_results.csv`:
 

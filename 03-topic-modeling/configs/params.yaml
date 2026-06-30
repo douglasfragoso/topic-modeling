@@ -57,7 +57,22 @@ corpora:
     covariates:
       - date
       - category
-    stopwords_emojis: []
+    stopwords_emojis:
+      - "atilde"
+      - "ccedil"
+      - "iacute"
+      - "eacute"
+      - "aacute"
+      - "otilde"
+      - "uacute"
+      - "ocirc"
+      - "acirc"
+      - "ecirc"
+      - "novamente"
+      - "representando"
+      - "quot"    # resíduo de &quot; HTML — polui T4 (cinema/cultura)
+      - "the"     # artigo inglês não filtrado — polui c-TF-IDF de tópicos PT
+      - "seta"    # símbolo de lista (→) tokenizado — ruído em T3/T21
     token_pattern: '(?u)\b[a-zA-ZÀ-ÿ]{2,}\b'
     bertopic_language: multilingual
     stm_prevalence_formula: "~ s(as.numeric(as.Date(date))) + category"
@@ -111,27 +126,30 @@ seed: 42
 # BERTopic (compartilhado — embedder e algoritmo são multilíngues)
 # =============================================================================
 bertopic:
-  embedding_model: "qwen3-embedding:0.6b"
+  embedding_model: "qwen3-embedding:8b"
   embedding_backend: "ollama"          # "ollama" ou "sentence_transformers"
-  embedding_dimension: null            # null = nativo 1024d (mudou de 768d Matryoshka em 2026-05-13)
+  embedding_dimension: null            # null = nativo 4096d (qwen3-embedding:8b)
+  embedding_suffix: "4096d"            # sufixo do .npy gerado pelo 02-embeddings
   umap:
     n_components: 5
-    n_neighbors: 15
+    n_neighbors: 10        # ← 20; composite sweep: nn=10 domina K=20-30
     min_dist: 0.0
     metric: "cosine"
   hdbscan:
-    min_cluster_size: 15
-    min_samples: 5
-    cluster_selection_method: "leaf"
-  min_topic_size: 25
+    min_cluster_size: 8    # ← 40; sweep: Diversity +2.2%, Exclus +7.7% vs mcs=40
+    min_samples: null      # null = default HDBSCAN (= mcs=8)
+    cluster_selection_method: "eom"   # ← leaf; EOM domina LEAF no regime mcs=8/nr=25 (C_v +0.039, Diversity +0.025, -7.6pp outliers, robusto nos 3 nn); reduce_topics_nr controla a granularidade a jusante
+  min_topic_size: 8        # = mcs; evita filtrar clusters válidos antes do reduce_topics
   mmr_diversity: 0.2
-  reduce_topics_nr: 30
+  reduce_topics_nr: 25     # ← 30; nr=25 → K=24; melhor equilíbrio C_v/Diversity
+  macro_k: 10              # ← 8; sweep: maior cluster 665 docs (vs 1313 em macro_k=8)
   vectorizer:
     ngram_range: [1, 2]
     # token_pattern e language vêm do corpus_cfg (variam por idioma)
   reduce_outliers:
-    enabled: true
-    strategy: "c-tf-idf"
+    enabled: true          # ← false; threshold sweep: c-tf-idf 0.15 melhor composite
+    strategy: "c-tf-idf"   # ← "off"; melhor para textos longos (Folha)
+    threshold: 0.15        # novo; c_v=0.605, outlier_post=25%, excl=0.476 — melhor composite
 
 # === LDA ===
 lda:
@@ -157,7 +175,7 @@ stm:
 
 # === Nomeação (LLM, multilíngue) ===
 llm:
-  model: "gemma4:e4b"
+  model: "gemma2:2b-instruct-q4_K_M"
   fallback_model: "qwen3:4b"
   base_url: "http://localhost:11434"
   enabled: true
@@ -166,12 +184,52 @@ llm:
 # === Avaliação ===
 evaluation:
   run_stability: true
-  stability_seeds: [42, 123, 456, 789, 1024]
+  stability_seeds: [42]
   kappa_threshold: 0.70
   top_n_keywords: 10
   top_n_words_cache: 100
   top_n_keywords_metrics: 20
-  top_n_keywords_llm: 25
+  top_n_keywords_llm: 50   # prompt_builder_custom lê top_n_llm do escopo (cell 9)
   top_n_keywords_viz: 30
   top_n_keywords_npmi: 100
   robustness_top_n_sweep: [10, 15, 20, 25, 30, 50, 100]
+  # Sweep de estrategias/threshold de reduce_outliers (_helpers.sweep_outlier_strategies/
+  # sweep_outlier_threshold). Custoso (refit completo x estrategia x seed) — off por padrao.
+  run_outlier_sweep: true    # tweets_bre2022: 1ª rodada — c-tf-idf veio calibrado para folha
+  outlier_sweep_seeds: [42]  # 1 seed suficiente para comparar estratégias
+  outlier_sweep_strategies: ["off", "c-tf-idf", "embeddings", "probabilities", "distributions"]
+  # Sweep de threshold por estrategia (sweep_outlier_threshold): responde se
+  # reducao parcial (threshold > 0) bate reducao total (0.0) ou off.
+  # c-tf-idf/probabilities/distributions: scores em [0,1]; 0.0 = realoca tudo.
+  # embeddings: similaridade coseno tipicamente alta — faixa 0.50-0.90.
+  run_threshold_sweep: true  # tweets_bre2022: 1ª rodada — threshold 0.15 veio calibrado para folha
+  threshold_sweep_seeds: [42]
+  threshold_sweep_grids:
+    c-tf-idf:      [0.0, 0.05, 0.10, 0.15, 0.20, 0.30]
+    embeddings:    [0.0, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90]
+    probabilities: [0.0, 0.05, 0.10, 0.15, 0.20, 0.30]
+    distributions: [0.0, 0.05, 0.10, 0.15, 0.20, 0.30]
+  # Grid UMAP n_neighbors x HDBSCAN min_cluster_size x HDBSCAN min_samples
+  # (_helpers.sweep_bertopic_grid). Refit completo por (seed × nn × mcs × ms × csm);
+  # reduce_nr é só pós-processamento (barato, copy-per-variant).
+  # min_samples é o parâmetro mais crítico para texto curto (tweets): controla
+  # conservadorismo do HDBSCAN → maior = mais outliers. Varrer explicitamente.
+  # 30 e 35 removidos do mcs (redundantes com 25/40 no primeiro sweep de tweets).
+  # K=10/15 removidos do reduce_nr (insuficientes para 200k tweets eleitorais).
+  # 2 seeds mínimo para Jaccard stability ser confiável (docstring sweep_bertopic_grid).
+  run_param_sweep: true     # tweets_bre2022: 1ª rodada — parâmetros folha não se transferem diretamente
+  param_sweep_seeds: [42]
+  param_sweep_n_neighbors: [10, 15, 20]
+  param_sweep_min_cluster_size: [8, 15, 25, 30, 35, 40]
+  param_sweep_min_samples: [null, 5, 15]   # null=default(=mcs); 5=permissivo; 15=conservador (crítico em tweets)
+  param_sweep_cluster_selection_methods: ["leaf", "eom"]
+  param_sweep_reduce_topics_nr: [10, 15, 20, 25, 30]
+  param_sweep_macro_k: [4, 5, 6, 7, 8, 10, 12]
+  # LDA alpha/eta hyperparameter grid (fixo K=BEST_K; passes=10 para velocidade)
+  # alpha: prior Dirichlet doc→topico
+  #   'symmetric' = uniforme; 'asymmetric' = 1/k (temas dominantes);
+  #   float baixo (0.01) = docs concentrados em poucos topicos; alto (0.5) = difusos
+  # eta: prior Dirichlet topico→palavra
+  #   null = gensim default (1/K); float baixo (0.01) = vocab concentrado (topicos distintos)
+  lda_alpha_grid: ['symmetric', 'asymmetric', 0.01, 0.1, 0.5]
+  lda_eta_grid: [null, 0.01, 0.1]

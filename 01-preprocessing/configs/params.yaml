@@ -53,6 +53,23 @@ corpora:
     min_words: 30
     emoji_handling: demojize_pt  # PT-BR (Folha de Sao Paulo)
 
+    # Amostragem estratificada: 500 docs por editoria = ~5k total
+    # Remove o null para desativar e rodar o corpus completo.
+    sample:
+      n_per_category: 500
+      category_column: category   # coluna apos rename (categories → category)
+      categories:
+        - poder
+        - mercado
+        - mundo
+        - cotidiano
+        - ilustrada
+        - esporte
+        - equilibrioesaude
+        - ambiente
+        - educacao
+        - ciencia
+
   # ---------------------------------------------------------------------------
   # ag_news — AG News (EN, ~127k news headlines)
   # CSV gerado por 00_baixar_datasets.ipynb (one-time, baixa via HuggingFace)
@@ -130,6 +147,25 @@ corpora:
     min_doc_length: 20      # tweets sao curtos
     min_words: 3
     emoji_handling: demojize_pt
+
+    # Deriva coluna `category` como YYYY-MM a partir da coluna de data (apos rename).
+    # Necessario para: (a) amostragem estratificada por mes; (b) validacao temporal no 03.
+    derive_category_from_date:
+      date_column: data        # coluna apos rename (created_at -> data)
+      format: "%Y-%m"          # extrai YYYY-MM (mes eleitoral)
+      output_column: category
+
+    # Amostragem estratificada: setembro ausente do dataset bruto (0 tweets).
+    # n_per_category=5000 compensa atrito do preprocessing (~34-65% retencao por mes)
+    # → meta ~10k tweets nos 4 meses disponiveis.
+    sample:
+      n_per_category: 5000
+      category_column: category   # coluna derivada acima (YYYY-MM)
+      categories:
+        - "2022-08"
+        - "2022-10"
+        - "2022-11"
+        - "2022-12"
 
 # =============================================================================
 # Geral

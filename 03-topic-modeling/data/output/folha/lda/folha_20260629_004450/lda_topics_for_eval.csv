@@ -1,0 +1,21 @@
+topic_id,topic_name,keywords,model
+0,Economia brasileira e finanças,"empresa, milhão, bilhão, mercado, preço, setor, pagar, brasil, banco, produto",lda
+1,Exploração espacial e missões lunares,"espacial, missão, lua, nasa, terra, voo, espaço, lunar, agência, planeta",lda
+2,Desmatamento na Amazônia e Bolsonaro,"governo, indígena, desmatamento, brasil, amazônia, ambiental, terra, ambiente, bolsonaro, presidente",lda
+3,Conflitos internacionais e líderes,"país, eua, governo, americano, trump, guerra, presidente, china, militar, pessoa",lda
+4,Paleontologia e fósseis no Brasil,"gelo, encontrar, região, terra, água, cientista, pesquisador, milhão, fóssil, dinossauro",lda
+5,Copa do Mundo e Seleção Brasileira,"jogo, copa, jogador, brasileiro, gol, time, equipe, futebol, seleção, partida",lda
+6,Políticas Públicas e Justiça Política,"bolsonaro, presidente, ministro, governo, federal, lula, jair, político, ministério, lei",lda
+7,Economia global e inflação brasileira,"país, governo, trabalho, economia, acordo, brasil, inflação, econômico, reforma, meta",lda
+8,Literatura e história do homem,"pessoa, livro, vida, mundo, história, ver, negro, pai, falar, mulher",lda
+9,Genética humana e evolução,"animal, espécie, humano, estudo, pesquisador, dna, genético, dado, usar, universidade",lda
+10,Eleições e disputa presidencial,"partido, bolsonaro, candidato, eleição, voto, governador, lula, governo, presidente, eleitoral",lda
+11,Mudanças Climáticas no Brasil,"climático, água, região, mudança, temperatura, sul, rio, país, área, emissão",lda
+12,Vacinação e Covid no Brasil,"saúde, vacina, caso, dose, pessoa, doença, país, coronavírus, pandemia, paciente",lda
+13,Cinema e música no Brasil,"filme, música, cinema, série, show, ator, the, cena, artista, festival",lda
+14,Chuvas no litoral paulista,"cidade, paulo, casa, região, pessoa, rio, ficar, prefeitura, rua, obra",lda
+15,Pesquisa científica e saúde no Brasil,"pesquisa, mulher, universidade, estudo, ciência, pesquisador, pessoa, brasil, científico, cientista",lda
+16,Enem e Seleção Unificada,"escola, aluno, ensino, estudante, aula, professor, educação, prova, universidade, curso",lda
+17,Educação e financiamento básico no Brasil,"educação, governo, escola, mec, recurso, nacional, país, ensino, projeto, público",lda
+18,Polícia e Operação de Segurança Pública,"polícia, caso, policial, justiça, crime, federal, segurança, investigação, público, prisão",lda
+19,Olímpicos e Atletas Brasileiros,"atleta, brasileiro, clube, esporte, brasil, seta, jogos, futebol, olímpico, país",lda
