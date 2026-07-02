@@ -99,6 +99,29 @@ def get_corpus_config(params: dict, corpus_id: str = None) -> tuple[str, dict]:
     return (corpus_id, corpora[corpus_id])
 
 
+def apply_bertopic_overrides(bert_cfg: dict, corpus_cfg: dict) -> dict:
+    """Overlay ``corpus_cfg['bertopic_overrides']`` onto the shared ``bertopic:``
+    block, one level deep (dict-valued keys like ``umap``/``hdbscan``/
+    ``reduce_outliers`` are merged key-by-key; scalar keys are replaced).
+
+    The ``bertopic:`` section in params.yaml is shared across corpora — e.g.
+    umap/hdbscan/reduce_outliers were calibrated for folha via its own sweep.
+    A per-corpus ``bertopic_overrides`` lets another corpus (e.g. tweets, via
+    its own ``sweep_bertopic_grid`` run) recalibrate just the knobs its sweep
+    touched, without mutating the shared dict or affecting other corpora.
+    Returns a NEW dict; ``bert_cfg`` and ``corpus_cfg`` are left untouched.
+    """
+    import copy
+    merged = copy.deepcopy(bert_cfg)
+    overrides = corpus_cfg.get("bertopic_overrides") or {}
+    for key, val in overrides.items():
+        if isinstance(val, dict) and isinstance(merged.get(key), dict):
+            merged[key] = {**merged[key], **val}
+        else:
+            merged[key] = val
+    return merged
+
+
 def get_column_names(params_or_cfg: dict, corpus_id: str = None) -> dict:
     """Extract column names. Accepts full ``params`` dict or a ``corpus_cfg``.
 
@@ -290,7 +313,7 @@ def load_corpus(input_dir, encoding: str = "utf-8", verbose: bool = True) -> pd.
 logger = logging.getLogger(__name__)
 
 
-async def _get_ollama_embedding(client, text, model, dimension, timeout=120.0):
+async def _get_ollama_embedding(client, text, model, dimension, timeout=120.0, _retries=5):
     """Get embedding for a single text via Ollama API.
 
     If ``dimension`` is provided and smaller than the model's native size, the
@@ -299,13 +322,45 @@ async def _get_ollama_embedding(client, text, model, dimension, timeout=120.0):
     used by Qwen3-Embedding (and any model trained with MRL). When the native
     size is already smaller, returns as-is and logs a warning (the request
     cannot be honoured without retraining).
+
+    Retries up to ``_retries`` times on 5xx errors **and on transient transport
+    failures** (ConnectError/timeout) with exponential backoff — needed when
+    Ollama runs in CPU/hybrid mode and the server momentarily drops the
+    connection or restarts (queues saturated, model reload under memory
+    pressure). Only 4xx (client) errors propagate immediately.
     """
-    resp = await client.post(
-        "http://localhost:11434/api/embeddings",
-        json={"model": model, "prompt": text},
-        timeout=timeout,
-    )
-    resp.raise_for_status()
+    import asyncio as _asyncio
+    last_exc = None
+    for attempt in range(_retries):
+        try:
+            resp = await client.post(
+                "http://localhost:11434/api/embeddings",
+                json={"model": model, "prompt": text},
+                timeout=timeout,
+            )
+        except (httpx.TransportError, httpx.TimeoutException) as exc:
+            # Servidor caiu/reiniciou ou timeout — retenta com backoff.
+            last_exc = exc
+            wait = 2 ** attempt
+            logger.warning(
+                "Ollama conexão falhou (%s) (attempt %d/%d), retrying in %ds…",
+                type(exc).__name__, attempt + 1, _retries, wait,
+            )
+            await _asyncio.sleep(wait)
+            continue
+        if resp.status_code < 500:
+            resp.raise_for_status()
+            break
+        last_exc = resp
+        wait = 2 ** attempt
+        logger.warning("Ollama 5xx (attempt %d/%d), retrying in %ds…", attempt + 1, _retries, wait)
+        await _asyncio.sleep(wait)
+    else:
+        # Retries esgotados: relança 5xx (Response) ou a última exceção de transporte.
+        if isinstance(last_exc, httpx.Response):
+            last_exc.raise_for_status()
+        elif last_exc is not None:
+            raise last_exc
     emb = resp.json()["embedding"]
 
     if dimension and len(emb) != dimension:
@@ -324,7 +379,7 @@ async def _get_ollama_embedding(client, text, model, dimension, timeout=120.0):
     return emb
 
 
-async def _get_ollama_embeddings_batch(texts, model, dimension, max_concurrent=5, timeout=120.0):
+async def _get_ollama_embeddings_batch(texts, model, dimension, max_concurrent=1, timeout=120.0):
     """Get embeddings for multiple texts with concurrency limit."""
     semaphore = asyncio.Semaphore(max_concurrent)
     async with httpx.AsyncClient() as client:
@@ -673,7 +728,7 @@ def build_prompt(
     lang : str
         ``"pt"`` (default, preserva comportamento histórico — rotulos em
         portugues brasileiro) ou ``"en"`` (rotulos em ingles, para corpora
-        EN como ag_news/reuters). Qualquer outro valor cai em ``"pt"``.
+        EN). Qualquer outro valor cai em ``"pt"``.
     """
     builder = _build_prompt_en if lang == "en" else _build_prompt_pt
     return builder(keywords, example_docs, top_n, doc_max_chars, max_docs)
@@ -767,8 +822,7 @@ def _smart_fallback(keywords: list[str], lang: str = "pt") -> str:
     "Saude, hospital e leitos" — pelo menos é uma frase nominal natural.
 
     ``lang="en"`` gera o conector em ingles ("and") em vez de "e", para
-    corpora EN (ag_news, reuters). Default ``"pt"`` preserva comportamento
-    historico.
+    corpora EN. Default ``"pt"`` preserva comportamento historico.
     """
     kws = [k for k in keywords[:3] if k and len(k) >= 2]
     no_label_msg = "Topic without label" if lang == "en" else "Topico sem rotulo"
@@ -796,92 +850,6 @@ def _looks_like_keyword_list(label: str, keywords: list[str], threshold: float =
     kws_lower = {k.lower() for k in keywords[:15] if k}
     matches = sum(1 for p in parts if p in kws_lower)
     return matches / len(parts) > threshold
-
-
-# ---------------------------------------------------------------------------
-# English few-shot prompt (news / financial-news domain — ag_news, reuters)
-# ---------------------------------------------------------------------------
-#
-# Mirrors the PT-BR `prompt_builder_custom` + `FEW_SHOT_EXAMPLES` pattern used
-# in the folha/reuters notebooks (governance/PE domain), but with English
-# few-shot examples relevant to general news / financial-news benchmarks
-# instead of Brazilian regional politics. Exported so EN-language notebooks
-# (01_bertopic_ag_news, 01_bertopic_reuters, 02_lda_ag_news, 02_lda_reuters)
-# can import directly instead of duplicating the prompt in-notebook.
-
-FEW_SHOT_EXAMPLES_EN = """\
-Examples of a good label (coherent noun phrase):
-
-  Keywords: stocks, shares, market, nasdaq, dow, trading
-  Label: Stock market trading
-
-  Keywords: earnings, profit, revenue, quarter, forecast, shares
-  Label: Quarterly earnings results
-
-  Keywords: election, vote, president, campaign, poll, candidate
-  Label: Presidential election campaign
-
-  Keywords: oil, crude, barrel, opec, prices, supply
-  Label: Crude oil prices
-
-  Keywords: championship, team, league, coach, season, game
-  Label: Sports league championship
-
-Examples of a BAD label (do NOT do this):
-  - "stocks, shares, market" (this is a LIST of keywords, not a label)
-  - "Topic about finance" (too generic, no information)
-  - "Stocks" (too short, lacks context)
-  - "The ongoing developments in the global financial markets this quarter" (too long)
-"""
-
-
-def prompt_builder_en_news(keywords: list[str], example_docs: list[str] | None = None) -> str:
-    """English few-shot prompt builder for news/financial-news corpora.
-
-    Use as ``prompt_builder=prompt_builder_en_news`` in ``name_topic`` /
-    ``name_all_topics`` for EN corpora (ag_news, reuters) — analogous to the
-    PT-BR ``prompt_builder_custom`` defined inline in the folha/reuters
-    notebooks, but with news-domain English few-shot examples instead of
-    Brazilian regional-politics examples.
-    """
-    top_n_keywords = 15
-    max_docs = 1
-    doc_max_chars = 200
-
-    keywords_str = ", ".join(keywords[:top_n_keywords])
-
-    docs_block = ""
-    if example_docs:
-        snippets = []
-        for d in example_docs[:max_docs]:
-            text = d if isinstance(d, str) else str(d)
-            snippets.append(f"Example document: {text[:doc_max_chars].strip()}...")
-        if snippets:
-            docs_block = "\n\n" + "\n\n".join(snippets)
-
-    return (
-        "You are an expert in labeling topics discovered by NLP models. "
-        "Your task is to convert keywords into a HUMAN-READABLE LABEL "
-        "(a coherent noun phrase in English, 3-5 words).\n\n"
-        + FEW_SHOT_EXAMPLES_EN + "\n"
-        "Now analyze this topic:\n\n"
-        f"Keywords: {keywords_str}"
-        f"{docs_block}\n\n"
-        "Strict rules:\n"
-        "- Respond with A SINGLE coherent noun phrase.\n"
-        "- Do NOT repeat the comma-separated keywords (that is a list, not a label).\n"
-        "- 3 to 5 words. No quotes, no prefixes like \"Label:\".\n"
-        "- Use concrete nouns. Capitalize only the first word.\n\n"
-        "/no_think\n\n"
-        "Label:"
-    )
-
-
-system_prompt_en_news = (
-    "You generate human-readable labels for topics. "
-    "Your answer is ALWAYS a coherent noun phrase (3-5 words), "
-    "NEVER a list of keywords."
-)
 
 
 def name_topic(
@@ -1018,7 +986,13 @@ def compute_coherence_cv(
     """Compute c_v coherence score using gensim."""
     from gensim.models import CoherenceModel
 
-    topics_list = [kws for kws in topics_keywords.values()]
+    topics_list = [
+        [w for w in kws if isinstance(w, str) and w]
+        for kws in topics_keywords.values()
+    ]
+    topics_list = [kws for kws in topics_list if kws]
+    if not topics_list:
+        return 0.0
     cm = CoherenceModel(
         topics=topics_list,
         texts=texts,
@@ -1270,7 +1244,18 @@ def compute_semantic_coherence(
     for tid, kws in topics_keywords.items():
         if len(kws) < 2:
             continue
-        embs = embedding_func(kws)
+        try:
+            embs = embedding_func(kws)
+        except Exception as exc:  # backend de embeddings indisponível (ex.: Ollama fora)
+            import warnings
+            warnings.warn(
+                "compute_semantic_coherence: backend de embeddings indisponível "
+                f"({type(exc).__name__}: {exc}). Retornando NaN. "
+                "Verifique se o Ollama está no ar (ollama serve) na porta 11434.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return float("nan")
         sim = cosine_similarity(embs)
         n = len(kws)
         total = sum(float(sim[i][j]) for i in range(n) for j in range(i + 1, n))
@@ -1564,7 +1549,10 @@ def _bertopic_sweep_metrics(
     """
     topics = model.topics_
     valid_ids = sorted(t for t in set(topics) if t != -1)
-    topics_keywords = {tid: [w for w, _ in model.get_topic(tid)] for tid in valid_ids}
+    topics_keywords = {
+        tid: [w for w, _ in (model.get_topic(tid) or []) if isinstance(w, str)]
+        for tid in valid_ids
+    }
     topic_index = {tid: i for i, tid in enumerate(sorted(model.get_topics().keys()))}
     ctfidf_matrix = model.c_tf_idf_.toarray() if model.c_tf_idf_ is not None else np.zeros((1, 1))
     vocab = model.vectorizer_model.get_feature_names_out()
@@ -1574,7 +1562,7 @@ def _bertopic_sweep_metrics(
     # nao do top-N de model.get_topic() (cache). Se usar so o cache, o denominador
     # da exclusividade ignora o peso real de uma palavra nos OUTROS topicos (tratado
     # como 0 quando ela nao esta no top-N deles), inflando a exclusividade. Espelha
-    # o fix F1 ja presente nos notebooks folha/reuters — mantem a coluna Exclus do
+    # o fix F1 ja presente no notebook da folha — mantem a coluna Exclus do
     # sweep comparavel com a metrica do pipeline principal.
     topic_word_scores: dict[int, dict[str, float]] = {}
     if model.c_tf_idf_ is not None:
@@ -1590,7 +1578,15 @@ def _bertopic_sweep_metrics(
         topic_word_scores = {tid: {w: float(s) for w, s in model.get_topic(tid)} for tid in valid_ids}
 
     tk_metrics = {tid: kws[:top_n_metrics] for tid, kws in topics_keywords.items()}
-    cv = compute_coherence_cv(tk_metrics, tokenized, dictionary)
+    try:
+        cv = compute_coherence_cv(tk_metrics, tokenized, dictionary)
+    except ValueError:
+        # gensim CoherenceModel exige que cada topico tenha >=1 token no
+        # dictionary (unigramas); com ngram_range=(1,2) um topico pode cair
+        # 100% em bigramas fora do vocabulario unigrama — mesmo modo de falha
+        # ja tratado no pipeline principal (notebook, celula "Metricas
+        # quantitativas completas"), aqui so precisa nao derrubar o sweep.
+        cv = float("nan")
     div = compute_topic_diversity(topics_keywords, top_k=top_n_metrics)
     excl, _ = compute_exclusivity_ctfidf(topics_keywords, topic_word_scores, top_n=top_n_metrics)
     frex, _ = compute_frex_score(

@@ -24,7 +24,7 @@ python -m spacy download en_core_web_sm    # EN
 ### 2. Ollama (embeddings + nomeação de tópicos)
 
 ```powershell
-ollama pull qwen3-embedding:0.6b        # vetorização de documentos (1024d nativo)
+ollama pull qwen3-embedding:8b        # vetorização de documentos (4096d nativo)
 ollama pull gemma2:2b-instruct-q4_K_M   # nomeação de tópicos via LLM (modelo em params.yaml > llm.model)
 ollama serve                            # deixar em background
 ```
@@ -40,8 +40,6 @@ O pipeline é **linear**: preprocessing → embeddings → topic modeling. A tra
 | Corpus ID | Arquivo bruto | Idioma |
 |---|---|---|
 | `folha` | `01-preprocessing/data/raw/folha/articles.csv` | PT-BR |
-| `ag_news` | `01-preprocessing/data/raw/ag_news/ag_news.csv` | EN |
-| `reuters` | `01-preprocessing/data/raw/reuters/reuters.csv` | EN |
 | `tweets_bre2022` | `01-preprocessing/data/raw/tweets_bre2022/tweets_bre2022.csv` | PT-BR |
 
 ---
@@ -73,14 +71,14 @@ Copy-Item "01-preprocessing\data\output\$CORPUS\corpus_limpo.csv" `
 
 #### Passo 3 — Embeddings
 
-Abra `02-embeddings/notebooks/02_embeddings.ipynb`, ajuste `CORPUS = "<corpus>"` e rode. Requer `ollama serve` com `qwen3-embedding:0.6b` em background.
+Abra `02-embeddings/notebooks/02_embeddings.ipynb`, ajuste `CORPUS = "<corpus>"` e rode. Requer `ollama serve` com `qwen3-embedding:8b` em background.
 
 ```powershell
 cd 02-embeddings\notebooks
 jupyter lab
 ```
 
-Saída gerada: `02-embeddings/data/output/<corpus>/embeddings_qwen3-embedding_0.6b_1024d.npy`
+Saída gerada: `02-embeddings/data/output/<corpus>/embeddings_qwen3-embedding_8b_4096d.npy`
 
 > **Performance:** ~50–200 docs/s dependendo do hardware. Para 100k docs espere 10–30 min na primeira vez; nas seguintes o cache `.npy` é reutilizado automaticamente.
 
@@ -94,8 +92,8 @@ $CORPUS = "folha"   # <-- alterar para cada corpus
 New-Item -ItemType Directory -Force "03-topic-modeling\data\input\$CORPUS"
 Copy-Item "01-preprocessing\data\output\$CORPUS\corpus_limpo.csv" `
           "03-topic-modeling\data\input\$CORPUS\corpus_limpo.csv"
-Copy-Item "02-embeddings\data\output\$CORPUS\embeddings_qwen3-embedding_0.6b_1024d.npy" `
-          "03-topic-modeling\data\input\$CORPUS\embeddings_qwen3-embedding_0.6b_1024d.npy"
+Copy-Item "02-embeddings\data\output\$CORPUS\embeddings_qwen3-embedding_8b_4096d.npy" `
+          "03-topic-modeling\data\input\$CORPUS\embeddings_qwen3-embedding_8b_4096d.npy"
 ```
 
 > **Opcional:** se você rodou análise de sentimento upstream, copie também `corpus_com_sentimento.csv` para o mesmo destino. O módulo 03 detecta automaticamente e herda a coluna `sentiment` nos outputs.
@@ -111,10 +109,10 @@ jupyter lab
 
 Escolha o notebook do corpus e modelo desejado:
 
-| Modelo | Folha | AG News | Reuters | Tweets BR 2022 |
-|---|---|---|---|---|
-| **BERTopic** | `bertopic/01_bertopic_folha.ipynb` | `bertopic/01_bertopic_ag_news.ipynb` | `bertopic/01_bertopic_reuters.ipynb` | `bertopic/01_bertopic_tweets_bre2022.ipynb` |
-| **LDA** | `lda/02_lda_folha.ipynb` | `lda/02_lda_ag_news.ipynb` | `lda/02_lda_reuters.ipynb` | `lda/02_lda_tweets_bre2022.ipynb` |
+| Modelo | Folha | Tweets BR 2022 |
+|---|---|---|
+| **BERTopic** | `bertopic/01_bertopic_folha.ipynb` | `bertopic/01_bertopic_tweets_bre2022.ipynb` |
+| **LDA** | `lda/02_lda_folha.ipynb` | `lda/02_lda_tweets_bre2022.ipynb` |
 
 A única célula a editar é `CORPUS_ID = "..."`. Rode do início ao fim.
 
@@ -128,7 +126,7 @@ Saídas em `03-topic-modeling/data/output/<corpus>/`:
 #### Script de cópia para todos os corpora de uma vez
 
 ```powershell
-foreach ($corpus in @("folha","ag_news","reuters","tweets_bre2022")) {
+foreach ($corpus in @("folha","tweets_bre2022")) {
     New-Item -ItemType Directory -Force "02-embeddings\data\input\$corpus"
     Copy-Item "01-preprocessing\data\output\$corpus\corpus_limpo.csv" `
               "02-embeddings\data\input\$corpus\corpus_limpo.csv" -ErrorAction SilentlyContinue
@@ -151,14 +149,12 @@ Investigação comparativa conduzida no PPGEC/UPE com foco em validar empiricame
 
 **Pergunta central:** "Sobre o que falam?" — validar quais modelos, em quais condições, respondem essa pergunta de forma confiável.
 
-**4 corpora canônicos** com variação sistemática de idioma, registro, tamanho e volume:
+**2 corpora canônicos** com variação sistemática de registro e volume:
 
 | Corpus | Idioma | Registro | Docs | Tokens/doc |
 |---|---|---|---|---|
 | folha (Folha de São Paulo) | PT-BR | Formal/jornalístico | ~variável | ~variável |
 | tweets_bre2022 (Eleições BR) | PT-BR | Informal | ~200k | ~23 |
-| reuters-21578 | EN | Formal | ~7.7k | ~120 |
-| ag_news | EN | Formal/news | ~127k | ~50 |
 
 **Hipóteses principais:**
 - **H1** BERTopic generaliza entre idiomas/domínios com `language="multilingual"` e ordem correta de pós-processamento (`reduce_outliers → update_topics → reduce_topics → update_topics`)
@@ -235,7 +231,7 @@ O processo segue sete estágios: (i) primeiro passa por uma fase de **Ingestão*
 
 ### 0.2 Embeddings (`02-embeddings/`)
 
-O processo segue quatro estágios: (i) inicia-se com a **Verificação de Cache**, na qual o módulo procura por um arquivo `.npy` pré-existente com a nomenclatura e o *shape* esperados, evitando recomputação dispendiosa; (ii) caso o cache não exista, a fase de **Computação Assíncrona** dispara requisições paralelas (com `asyncio.Semaphore(5)`) ao endpoint `/api/embeddings` do Ollama local, usando o modelo multilíngue `qwen3-embedding:0.6b` que produz vetores de 1024 dimensões nativos; (iii) na fase de **Normalização**, cada vetor é dividido por sua norma L2 individualmente, garantindo que a similaridade *cosine* se reduza a um produto escalar nas etapas subsequentes; e (iv) finalmente, na **Persistência e Validação**, os vetores são empilhados em um *array* NumPy `(n_docs, 1024)` em `float32`, gravados em disco e submetidos a *sanity checks* (ausência de `NaN`/`Inf`, normas próximas a 1.0, variância dimensional adequada) antes de serem considerados aptos ao consumo *downstream*.
+O processo segue quatro estágios: (i) inicia-se com a **Verificação de Cache**, na qual o módulo procura por um arquivo `.npy` pré-existente com a nomenclatura e o *shape* esperados, evitando recomputação dispendiosa; (ii) caso o cache não exista, a fase de **Computação Assíncrona** dispara requisições paralelas (com `asyncio.Semaphore(5)`) ao endpoint `/api/embeddings` do Ollama local, usando o modelo multilíngue `qwen3-embedding:8b` que produz vetores de 4096 dimensões nativos; (iii) na fase de **Normalização**, cada vetor é dividido por sua norma L2 individualmente, garantindo que a similaridade *cosine* se reduza a um produto escalar nas etapas subsequentes; e (iv) finalmente, na **Persistência e Validação**, os vetores são empilhados em um *array* NumPy `(n_docs, 4096)` em `float32`, gravados em disco e submetidos a *sanity checks* (ausência de `NaN`/`Inf`, normas próximas a 1.0, variância dimensional adequada) antes de serem considerados aptos ao consumo *downstream*.
 
 ```
     +----------------------+
@@ -245,7 +241,7 @@ O processo segue quatro estágios: (i) inicia-se com a **Verificação de Cache*
                v
     +------------------------------------+
     | (i) Cache embeddings_*.npy existe  |
-    | e shape (n_docs, 1024) confere?    |
+    | e shape (n_docs, 4096) confere?    |
     +-----+---------------------------+--+
           |                           |
          sim                         nao
@@ -254,7 +250,7 @@ O processo segue quatro estágios: (i) inicia-se com a **Verificação de Cache*
     +-----------+    +------------------------------+
     | np.load() |    | (ii) Async batch (sem = 5)   |
     +-----+-----+    | POST /api/embeddings         |
-          |          | (Ollama qwen3-embedding 0.6b)|
+          |          | (Ollama qwen3-embedding 8b)|
           |          +---------------+--------------+
           |                          |
           |                          v
@@ -273,14 +269,14 @@ O processo segue quatro estágios: (i) inicia-se com a **Verificação de Cache*
     +-------------------------------------+
     | (iv) Sanity checks                  |
     | - sem NaN / Inf                     |
-    | - shape (n_docs, 1024)              |
+    | - shape (n_docs, 4096)              |
     | - normas ~ 1.0                      |
     +-------------------------------------+
                        |
                        v
     +-------------------------------------+
-    | embeddings_qwen3-embedding_0.6b_    |
-    |   1024d.npy                         |
+    | embeddings_qwen3-embedding_8b_    |
+    |   4096d.npy                         |
     +-------------------------------------+
 ```
 
@@ -288,7 +284,7 @@ O processo segue quatro estágios: (i) inicia-se com a **Verificação de Cache*
 
 > **Nota de estrutura:** No pipeline refatorado, a análise de sentimento é uma etapa upstream opcional. Se `corpus_com_sentimento.csv` estiver disponível em `03-topic-modeling/data/input/<corpus>/`, os outputs de tópicos herdam automaticamente a coluna `sentiment`. Caso contrário, o módulo usa `corpus_limpo.csv` (sem coluna `sentiment` nos outputs).
 
-O processo segue cinco estágios: (i) na fase de **Carregamento**, o módulo lê simultaneamente o `corpus_limpo.csv` e os embeddings cacheados pelo módulo anterior; (ii) em paralelo, na **Embedding das Âncoras**, vinte sentenças-âncora universais e bilíngues (dez positivas, dez negativas, declaradas globalmente em `sentiment.anchors` no `params.yaml`) são vetorizadas pelo mesmo modelo de embeddings, garantindo o alinhamento do espaço semântico; (iii) na **Construção de Centroides**, calcula-se a média aritmética dos embeddings de cada classe, normalizada L2, produzindo dois vetores de referência no espaço 1024-dimensional; (iv) na fase de **Classificação Geométrica**, a similaridade *cosine* entre cada documento e os dois centroides é computada via produto escalar matricial — a classe é definida pelo `argmax` e a `confidence` pela margem entre top-1 e top-2; e (v) finalmente, na **Validação Independente**, um modelo independente (`gemma4:e4b`) é submetido a uma amostra estratificada de trinta documentos sob um *prompt* universal bilíngue, e o *agreement* com o classificador define se as âncoras estão validadas (≥ 90%), marginais (75-89%) ou se precisam ser redesenhadas (< 75%).
+O processo segue cinco estágios: (i) na fase de **Carregamento**, o módulo lê simultaneamente o `corpus_limpo.csv` e os embeddings cacheados pelo módulo anterior; (ii) em paralelo, na **Embedding das Âncoras**, vinte sentenças-âncora universais e bilíngues (dez positivas, dez negativas, declaradas globalmente em `sentiment.anchors` no `params.yaml`) são vetorizadas pelo mesmo modelo de embeddings, garantindo o alinhamento do espaço semântico; (iii) na **Construção de Centroides**, calcula-se a média aritmética dos embeddings de cada classe, normalizada L2, produzindo dois vetores de referência no espaço 4096-dimensional; (iv) na fase de **Classificação Geométrica**, a similaridade *cosine* entre cada documento e os dois centroides é computada via produto escalar matricial — a classe é definida pelo `argmax` e a `confidence` pela margem entre top-1 e top-2; e (v) finalmente, na **Validação Independente**, um modelo independente (`gemma4:e4b`) é submetido a uma amostra estratificada de trinta documentos sob um *prompt* universal bilíngue, e o *agreement* com o classificador define se as âncoras estão validadas (≥ 90%), marginais (75-89%) ou se precisam ser redesenhadas (< 75%).
 
 ```
     +----------------------+   +-------------------------+
@@ -344,7 +340,7 @@ O processo segue cinco estágios: (i) na fase de **Carregamento**, o módulo lê
 
 ### 0.4 Modelagem de Tópicos — BERTopic (`03-topic-modeling/`)
 
-O processo segue cinco estágios: (i) inicia-se com o **Carregamento** do corpus via `load_corpus()`, que prefere automaticamente `corpus_com_sentimento.csv` quando disponível (preservando a coluna de sentimento nos outputs finais), juntamente com os embeddings cacheados; (ii) na fase de **Redução Dimensional**, o UMAP projeta os vetores de 1024 dimensões em um espaço de cinco dimensões com métrica *cosine*, preservando a topologia local dos pontos; (iii) na **Clusterização por Densidade**, o HDBSCAN identifica agrupamentos sem exigir um número pré-fixado de tópicos, atribuindo a rótulo `-1` os documentos em regiões esparsas (*outliers*); (iv) na fase de **Representação**, o c-TF-IDF (TF-IDF baseado em classe) calcula a relevância distintiva de cada *token* para cada cluster, e o MMR (*Maximal Marginal Relevance*) diversifica os top *keywords* para evitar redundância; (v) finalmente, na **Pós-processamento**, o número de tópicos é reduzido conforme `reduce_topics_nr=30` e os *outliers* são realocados via estratégia c-TF-IDF, produzindo o `bertopic_results.csv` que herda automaticamente a coluna `sentiment` quando o corpus de entrada já a contém.
+O processo segue cinco estágios: (i) inicia-se com o **Carregamento** do corpus via `load_corpus()`, que prefere automaticamente `corpus_com_sentimento.csv` quando disponível (preservando a coluna de sentimento nos outputs finais), juntamente com os embeddings cacheados; (ii) na fase de **Redução Dimensional**, o UMAP projeta os vetores de 4096 dimensões em um espaço de cinco dimensões com métrica *cosine*, preservando a topologia local dos pontos; (iii) na **Clusterização por Densidade**, o HDBSCAN identifica agrupamentos sem exigir um número pré-fixado de tópicos, atribuindo a rótulo `-1` os documentos em regiões esparsas (*outliers*); (iv) na fase de **Representação**, o c-TF-IDF (TF-IDF baseado em classe) calcula a relevância distintiva de cada *token* para cada cluster, e o MMR (*Maximal Marginal Relevance*) diversifica os top *keywords* para evitar redundância; (v) finalmente, na **Pós-processamento**, o número de tópicos é reduzido conforme `reduce_topics_nr=30` e os *outliers* são realocados via estratégia c-TF-IDF, produzindo o `bertopic_results.csv` que herda automaticamente a coluna `sentiment` quando o corpus de entrada já a contém.
 
 ```
     +------------------------+
@@ -460,7 +456,7 @@ flowchart TD
     RAW["📁 data/raw/&lt;corpus&gt;/*.csv"]
     
     PRE["**01-preprocessing**\nclean · dedup · lang-filter · length-filter"]
-    EMB["**02-embeddings**\nqwen3-embedding:0.6b · 1024d · L2-norm · cache .npy"]
+    EMB["**02-embeddings**\nqwen3-embedding:8b · 4096d · L2-norm · cache .npy"]
     SENT["*(opcional) análise de sentimento upstream*\nâncoras universais + LLM-as-Judge\n→ corpus_com_sentimento.csv"]
     TM["**03-topic-modeling**"]
     
@@ -489,7 +485,7 @@ A transferência é **manual e explícita**: cada módulo escreve em `data/outpu
 | Produtor | Arquivo de saída | Consumidor |
 |---|---|---|
 | `01-preprocessing` | `data/output/<corpus>/corpus_limpo.csv` | `02-embeddings` |
-| `02-embeddings` | `data/output/<corpus>/embeddings_qwen3-embedding_0.6b_1024d.npy` | `(upstream sentiment)` |
+| `02-embeddings` | `data/output/<corpus>/embeddings_qwen3-embedding_8b_4096d.npy` | `(upstream sentiment)` |
 | `(upstream sentiment)` | `data/output/<corpus>/corpus_com_sentimento.csv` | `03-topic-modeling` |
 | `03-topic-modeling` | `data/output/<corpus>/{bertopic,lda}_results.csv` (já incluem coluna `sentiment`) + `*_topics_for_eval.csv` | análises externas |
 
@@ -515,7 +511,7 @@ A coluna `post_id` permanece como chave de cruzamento *end-to-end*, útil para j
 
 - **Python ≥ 3.10**
 - **Ollama** rodando localmente em `http://localhost:11434` com os modelos:
-  - `qwen3-embedding:0.6b` (embeddings, 1024d nativo)
+  - `qwen3-embedding:8b` (embeddings, 4096d nativo)
   - `gemma4:e4b` (nomeação de tópicos via LLM)
 
 ### Setup do ambiente
@@ -532,7 +528,7 @@ pip install -r requirements.txt
 ### Setup do Ollama
 
 ```bash
-ollama pull qwen3-embedding:0.6b
+ollama pull qwen3-embedding:8b
 ollama pull gemma4:e4b
 ollama serve   # mantenha em background
 ```
@@ -560,16 +556,17 @@ ollama serve   # mantenha em background
     ├── notebooks/
     │   ├── _helpers.py                  # funções utilitárias consolidadas (2000+ linhas)
     │   ├── bertopic/
-    │   │   ├── 00_template_bertopic.ipynb
-    │   │   ├── 01_bertopic.ipynb           # social (PT-BR) — padrão de visualização
-    │   │   ├── 01_bertopic_agnews.ipynb    # AG News (EN)
-    │   │   ├── 01_bertopic_reuters.ipynb   # Reuters-21578 (EN)
-    │   │   └── 05_bertopic_tweets.ipynb    # Tweets BR 2022 (PT-BR)
+    │   │   ├── 00_template_bertopic.ipynb          # template para novo corpus
+    │   │   ├── 01_bertopic_folha.ipynb             # Folha de S. Paulo (PT-BR) — padrão de visualização
+    │   │   ├── 01_bertopic_tweets_bre2022.ipynb    # Tweets BR 2022 (PT-BR)
+    │   │   ├── PIPELINE_BERTOPIC_FOLHA.md          # documentação do pipeline (folha)
+    │   │   └── PIPELINE_TWEETS_BERTOPIC.md         # documentação do pipeline (tweets)
     │   └── lda/
-    │       ├── 02_lda.ipynb               # social (PT-BR)
-    │       ├── 02_lda_agnews.ipynb         # AG News (EN)
-    │       ├── 02_lda_reuters.ipynb        # Reuters-21578 (EN)
-    │       └── 02_lda_tweets.ipynb         # Tweets BR 2022 (PT-BR)
+    │       ├── 00_template_lda.ipynb               # template para novo corpus
+    │       ├── 02_lda_folha.ipynb                  # Folha de S. Paulo (PT-BR)
+    │       ├── 02_lda_tweets_bre2022.ipynb         # Tweets BR 2022 (PT-BR)
+    │       ├── PIPELINE_LDA_FOLHA.md               # documentação do pipeline (folha)
+    │       └── PIPELINE_TWEETS_LDA.md              # documentação do pipeline (tweets)
     └── data/{input,output}/
 ```
 
@@ -715,7 +712,7 @@ Produzir embeddings de documento (1 vetor por linha do `corpus_limpo.csv`) com u
                v
     +------------------------------------+
     | Cache embeddings_*.npy existe e    |
-    | shape (n_docs, 1024) confere?      |
+    | shape (n_docs, 4096) confere?      |
     +-----+-------------------------+----+
           |                         |
          sim                       nao
@@ -724,7 +721,7 @@ Produzir embeddings de documento (1 vetor por linha do `corpus_limpo.csv`) com u
     +-----------+    +------------------------------+
     | np.load() |    | Async batch (semaforo = 5)   |
     +-----+-----+    | POST /api/embeddings         |
-          |         | (Ollama qwen3-embedding 0.6b)|
+          |         | (Ollama qwen3-embedding 8b)|
           |         +---------------+--------------+
           |                         |
           |                         v
@@ -743,7 +740,7 @@ Produzir embeddings de documento (1 vetor por linha do `corpus_limpo.csv`) com u
     +-------------------------------------+
     | Sanity checks                       |
     | - sem NaN / Inf                     |
-    | - shape (n_docs, 1024)              |
+    | - shape (n_docs, 4096)              |
     | - normas ~ 1.0 (variancia baixa)    |
     | - UMAP 2D para inspecao visual      |
     +------------+------------------------+
@@ -751,8 +748,8 @@ Produzir embeddings de documento (1 vetor por linha do `corpus_limpo.csv`) com u
                  v
     +-------------------------------------+
     | data/output/<corpus>/               |
-    |   embeddings_qwen3-embedding_0.6b_  |
-    |   1024d.npy                         |
+    |   embeddings_qwen3-embedding_8b_  |
+    |   4096d.npy                         |
     +-------------------------------------+
 ```
 
@@ -761,7 +758,7 @@ Produzir embeddings de documento (1 vetor por linha do `corpus_limpo.csv`) com u
 1. **Leitura** do `corpus_limpo.csv`; identifica `text_column` via `params.yaml`.
 2. **Verificação de cache**: procura `embeddings_<safe_model>_<suffix>.npy` em `data/output/<corpus>/`. Se existe e shape bate (`n_docs × dim_esperada`), carrega.
 3. **Embedding em batch assíncrono**: `asyncio.Semaphore(5)` limita concorrência; para cada texto, POST a `http://localhost:11434/api/embeddings`.
-4. **(Opcional) Matryoshka truncation**: se `dimension: <int>` for declarado em `params.yaml`, faz slice `emb[:dimension]`. Por padrão `null` → mantém 1024d nativo.
+4. **(Opcional) Matryoshka truncation**: se `dimension: <int>` for declarado em `params.yaml`, faz slice `emb[:dimension]`. Por padrão `null` → mantém 4096d nativo.
 5. **L2 normalize**: `emb / np.linalg.norm(emb)`. Embeddings normalizados → cosine = dot product (mais rápido downstream).
 6. **Stack + cast**: `np.stack(vecs).astype(np.float32)`. Float32 economiza 50% de memória vs float64.
 7. **Persistência**: `np.save(path, arr)`.
@@ -776,10 +773,10 @@ Produzir embeddings de documento (1 vetor por linha do `corpus_limpo.csv`) com u
 ```yaml
 embeddings:
   models:
-    - name: qwen3-embedding:0.6b
+    - name: qwen3-embedding:8b
       backend: ollama
-      dimension: null          # null = 1024d nativo
-      suffix: 1024d
+      dimension: null          # null = 4096d nativo
+      suffix: 4096d
       timeout: 120              # segundos por requisição
   ollama_timeout_default: 120
 ```
@@ -787,8 +784,8 @@ embeddings:
 ### Inputs / Outputs
 
 - **Input**: `data/input/<corpus>/corpus_limpo.csv`
-- **Output**: `data/output/<corpus>/embeddings_qwen3-embedding_0.6b_1024d.npy`
-  - Shape `(n_docs, 1024)`, dtype `float32`, normalizado L2
+- **Output**: `data/output/<corpus>/embeddings_qwen3-embedding_8b_4096d.npy`
+  - Shape `(n_docs, 4096)`, dtype `float32`, normalizado L2
   - Ordem das linhas corresponde 1:1 com `corpus_limpo.csv`
 
 ### Performance
@@ -906,7 +903,7 @@ Cobertura emocional (modelo de Russell, valência): alegria/tristeza, paz/sofrim
 ```yaml
 sentiment:
   approach: embedding_anchor
-  embedder_model: qwen3-embedding:0.6b
+  embedder_model: qwen3-embedding:8b
   embedder_backend: ollama
   embedder_dimension: null
   classes: [negative, positive]
@@ -1027,7 +1024,7 @@ Descobrir tópicos latentes em corpus textuais usando dois algoritmos complement
 
 ```yaml
 bertopic:
-  embedding_model: qwen3-embedding:0.6b
+  embedding_model: qwen3-embedding:8b
   embedding_backend: ollama
   umap: {n_components: 5, n_neighbors: 15, min_dist: 0.0, metric: cosine}
   hdbscan: {min_cluster_size: 15, min_samples: 5, cluster_selection_method: leaf}
@@ -1038,7 +1035,7 @@ bertopic:
   reduce_outliers: {enabled: true, strategy: c-tf-idf}
 ```
 
-> **Nota — `min_df` por corpus:** o `min_df` (frequência documental mínima para um termo entrar no vocabulário) é definido **no notebook**, não no `params.yaml`. AG News usa `min_df=5`; `folha` e `tweets_bre2022` usam o default (`min_df=1`, sem filtro), porque em texto curto (tweets) ou já limpo (folha) um corte alto varre vocabulário demais.
+> **Nota — `min_df` por corpus:** o `min_df` (frequência documental mínima para um termo entrar no vocabulário) é definido **no notebook**, não no `params.yaml`. `folha` e `tweets_bre2022` usam o default (`min_df=1`, sem filtro), porque em texto curto (tweets) ou já limpo (folha) um corte alto varre vocabulário demais.
 
 #### Glossário dos hiperparâmetros estruturais
 
@@ -1150,7 +1147,7 @@ Schema padrão dos `*_results.csv`:
 | **Seed** | `42` por padrão, configurável em cada `params.yaml` |
 | **Chave de cruzamento** | `post_id` preservada *end-to-end* entre módulos |
 | **Granularidade** | `unit` em todos os modelos de tópico (1 linha por doc, sem agregação mensal) |
-| **Dimensão de embedding** | 1024d nativo do `qwen3-embedding:0.6b` (Matryoshka truncation desativada) |
+| **Dimensão de embedding** | 4096d nativo do `qwen3-embedding:8b` (Matryoshka truncation desativada) |
 | **Idiomas suportados** | PT-BR e EN (embedder é multilíngue) |
 | **Dados brutos** | Nunca modifique arquivos em `data/raw/` — são imutáveis por convenção |
 | **Notebook por padrão** | Cada módulo tem seu `01_*.ipynb` como artefato primário; sem `src/`, sem testes |
@@ -1215,7 +1212,7 @@ Após rodar o pipeline completo para um corpus, você terá nos respectivos `dat
     corpus_limpo.csv                  # corpus padronizado
 
 02-embeddings/data/output/<corpus>/
-    embeddings_*.npy                  # vetores 1024d normalizados
+    embeddings_*.npy                  # vetores 4096d normalizados
 
 (upstream sentiment — opcional)/data/output/<corpus>/
     sentiment_results.csv             # versão minima auditavel

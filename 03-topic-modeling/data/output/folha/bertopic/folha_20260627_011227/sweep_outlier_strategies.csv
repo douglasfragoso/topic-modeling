@@ -1,0 +1,6 @@
+strategy,n_seeds,K,outlier_pre,outlier_post,C_v,Diversity,Exclus,FREX,Stability,Stab_std
+off,1,29.0,0.3547,0.3547,0.5804,0.7638,0.4422,0.9879,,
+c-tf-idf,1,30.0,0.3547,0.0,0.5159,0.69,0.3497,0.9811,,
+embeddings,1,30.0,0.3547,0.0,0.5142,0.6733,0.3375,0.981,,
+probabilities,1,30.0,0.3547,0.0,0.5017,0.67,0.3308,0.981,,
+distributions,1,30.0,0.3547,0.0,0.5263,0.6867,0.3511,0.981,,

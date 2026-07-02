@@ -22,26 +22,41 @@ topic_modeling.docx
 !**/data/output/.gitkeep
 *.npy
 
-# === Resultados folha — runs de produção para relatório final ===
-# Desigora apenas CSVs/PNGs pequenos; exclui arquivos > ~5 MB e HTMLs interativos.
-# Runs de exploração e novos runs permanecem ignorados (folha_202*/ os cobre).
+# === Resultados de produção (folha + tweets_bre2022) para relatório final ===
+# Desigora apenas CSVs/PNGs pequenos; exclui arquivos > ~5 MB e HTMLs interativos grandes.
+# Runs de exploração permanecem ignorados, exceto seus sweep_*.csv (evidência dos sweeps
+# de investigação documentados nos PIPELINE_*.md). Caches do grid LDA (lda_metrics.csv /
+# lda_alpha_eta_grid.csv no diretório-base) entram automaticamente via negação do corpus.
 !03-topic-modeling/data/output/folha/
+!03-topic-modeling/data/output/tweets_bre2022/
 
-# LDA — demais runs ignorados; mantém apenas folha_20260629_004450 + caches do grid
-03-topic-modeling/data/output/folha/lda/folha_202*/
-!03-topic-modeling/data/output/folha/lda/folha_20260629_004450/
+# LDA folha — run final: folha_20260629_004450
+03-topic-modeling/data/output/folha/lda/folha_202*/*
+!03-topic-modeling/data/output/folha/lda/folha_20260629_004450/**
 03-topic-modeling/data/output/folha/lda/folha_20260629_004450/lda_results.csv
 03-topic-modeling/data/output/folha/lda/folha_20260629_004450/lda_tsne_theta_interactive.html
 
-# BERTopic — demais runs ignorados; mantém apenas folha_20260628_113224
-03-topic-modeling/data/output/folha/bertopic/folha_202*/
-!03-topic-modeling/data/output/folha/bertopic/folha_20260628_113224/
-03-topic-modeling/data/output/folha/bertopic/folha_20260628_113224/bertopic_results.csv
-03-topic-modeling/data/output/folha/bertopic/folha_20260628_113224/bertopic_documents_interactive.html
-03-topic-modeling/data/output/folha/bertopic/folha_20260628_113224/bertopic_barchart.html
-03-topic-modeling/data/output/folha/bertopic/folha_20260628_113224/bertopic_hierarchy.html
-03-topic-modeling/data/output/folha/bertopic/folha_20260628_113224/bertopic_sankey_reduce_topics.html
-03-topic-modeling/data/output/folha/bertopic/folha_20260628_113224/bertopic_topic_map.html
+# BERTopic folha — run final: folha_20260628_221412 (definitivo, cf. PIPELINE_BERTOPIC_FOLHA.md)
+# + sweep_*.csv dos runs de investigação (20260626_120557/215339, 20260627_011227/111417)
+03-topic-modeling/data/output/folha/bertopic/folha_202*/*
+!03-topic-modeling/data/output/folha/bertopic/folha_202*/sweep_*.csv
+!03-topic-modeling/data/output/folha/bertopic/folha_20260628_221412/**
+03-topic-modeling/data/output/folha/bertopic/folha_20260628_221412/bertopic_results.csv
+03-topic-modeling/data/output/folha/bertopic/folha_20260628_221412/*.html
+
+# LDA tweets — run final: tweets_bre2022_20260701_214134
+03-topic-modeling/data/output/tweets_bre2022/lda/tweets_bre2022_202*/*
+!03-topic-modeling/data/output/tweets_bre2022/lda/tweets_bre2022_20260701_214134/**
+03-topic-modeling/data/output/tweets_bre2022/lda/tweets_bre2022_20260701_214134/lda_results.csv
+03-topic-modeling/data/output/tweets_bre2022/lda/tweets_bre2022_20260701_214134/lda_tsne_theta_interactive.html
+
+# BERTopic tweets — run final: tweets_bre2022_20260701_201916
+# + sweep_*.csv dos runs de investigação (20260630_002427/230717/234301)
+03-topic-modeling/data/output/tweets_bre2022/bertopic/tweets_bre2022_202*/*
+!03-topic-modeling/data/output/tweets_bre2022/bertopic/tweets_bre2022_202*/sweep_*.csv
+!03-topic-modeling/data/output/tweets_bre2022/bertopic/tweets_bre2022_20260701_201916/**
+03-topic-modeling/data/output/tweets_bre2022/bertopic/tweets_bre2022_20260701_201916/bertopic_results.csv
+03-topic-modeling/data/output/tweets_bre2022/bertopic/tweets_bre2022_20260701_201916/*.html
 
 # Models
 *_model/

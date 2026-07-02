@@ -1,0 +1,2 @@
+model,topic_type,granularity,corpus,n_topics,outlier_rate,coverage,exclusivity,exclusivity_simple,exclusivity_ctfidf,topic_diversity_dieng,coherence_cv,semantic_coherence,frex
+bertopic,semantic,unit,tweets_bre2022,24,0.37589376915219613,0.6241062308478038,0.795075592541946,0.8981481481481481,0.795075592541946,0.9208333333333333,0.5724531969943613,0.6595186125094953,0.9897089388760981

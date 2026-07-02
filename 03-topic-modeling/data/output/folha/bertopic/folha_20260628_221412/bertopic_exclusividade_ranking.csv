@@ -1,0 +1,25 @@
+topic_id,topic_name,exclusividade,n_docs
+21,Fórmula 1 e Hamilton em recuperação,0.8726970512226677,15
+16,Conflito Israel-Hamas e guerra na Cisjordânia,0.7063082275050719,41
+13,Enem e Seleção Nacional de Ensino Médio,0.7060705097897632,81
+23,Museu Nacional e incêndio,0.6527800388951005,10
+17,Petróleo e preços de combustíveis,0.6520932514253366,37
+22,China e Covid-19 no mundo,0.6325650891800436,14
+9,Missões espaciais e exploração lunar,0.6305746063783488,175
+3,Copa do Mundo e futebol brasileiro,0.6190347254745275,359
+20,Chuvas em São Paulo,0.6088116204895385,20
+18,Mortes por Covid no Brasil,0.6035878141857218,32
+10,Guerra na Ucrânia e Rússia,0.5036534002720398,128
+12,Economia brasileira e inflação,0.48277085816290544,84
+15,Mudanças Climáticas e El Niño,0.4564294446221727,60
+19,Migrações e déficit habitacional no Brasil,0.45011311441910173,24
+14,Fake news e eleições no Brasil,0.4430936930159309,66
+5,Cinema e artistas brasileiros,0.3786147979457229,320
+8,Paleontologia e fósseis no Brasil,0.37487358613646105,195
+4,Desmatamento na Amazônia e ambientalistas,0.36371664097681217,336
+11,Economia de São Paulo e pandemia,0.3166350733126807,107
+1,Educação no Brasil e políticas públicas,0.2634737249583717,417
+2,Vacinação contra Covid-19 no Brasil,0.2550705736047214,411
+6,Polícia e violência pública,0.2420685827747669,213
+0,Políticas eleitorais e governo,0.2302863454426714,528
+7,Cidades e pandemia no Brasil,0.218737916290653,196

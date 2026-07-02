@@ -1,23 +1,16 @@
 # =============================================================================
 # 02-embeddings — Multi-corpus configuration
 # =============================================================================
-# O embedder (qwen3-embedding:0.6b) é multilíngue e funciona para PT-BR e EN —
-# por isso a seção `embeddings.models` é compartilhada. Cada corpus só precisa
-# saber qual coluna de texto e qual subdiretório usar.
+# O embedder (qwen3-embedding:8b) é multilíngue — por isso a seção
+# `embeddings.models` é compartilhada. Cada corpus só precisa saber qual
+# coluna de texto e qual subdiretório usar.
 #
 # Selecione o corpus editando `default_corpus` abaixo ou a célula `CORPUS = "..."`
 # no início de `notebooks/02_embeddings.ipynb`.
 # =============================================================================
 
 corpora:
-  ag_news:
-    text_column: message
-    subdir: ag_news
-
-  reuters:
-    text_column: message
-    subdir: reuters
-
+  
   folha:
     text_column: message
     subdir: folha
@@ -37,6 +30,6 @@ embeddings:
     - name: "qwen3-embedding:8b"
       type: "ollama"
       max_tokens: 64000
-      dimension: null              # null = dimensão nativa 1024d (sem truncação)
+      dimension: null              # null = dimensão nativa 4096d (sem truncação)
       suffix: "4096d"
       timeout: 360

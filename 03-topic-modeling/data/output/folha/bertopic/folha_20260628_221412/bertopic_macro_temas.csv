@@ -1,0 +1,25 @@
+topic_id,macro_id,topic_name,n_docs
+11,1,Economia de São Paulo e pandemia,107
+12,1,Economia brasileira e inflação,84
+17,1,Petróleo e preços de combustíveis,37
+0,2,Políticas eleitorais e governo,528
+1,2,Educação no Brasil e políticas públicas,417
+2,2,Vacinação contra Covid-19 no Brasil,411
+4,2,Desmatamento na Amazônia e ambientalistas,336
+6,2,Polícia e violência pública,213
+7,2,Cidades e pandemia no Brasil,196
+13,2,Enem e Seleção Nacional de Ensino Médio,81
+14,2,Fake news e eleições no Brasil,66
+19,2,Migrações e déficit habitacional no Brasil,24
+10,3,Guerra na Ucrânia e Rússia,128
+16,3,Conflito Israel-Hamas e guerra na Cisjordânia,41
+18,4,Mortes por Covid no Brasil,32
+22,5,China e Covid-19 no mundo,14
+15,6,Mudanças Climáticas e El Niño,60
+20,6,Chuvas em São Paulo,20
+3,7,Copa do Mundo e futebol brasileiro,359
+5,7,Cinema e artistas brasileiros,320
+21,8,Fórmula 1 e Hamilton em recuperação,15
+8,9,Paleontologia e fósseis no Brasil,195
+9,9,Missões espaciais e exploração lunar,175
+23,10,Museu Nacional e incêndio,10
